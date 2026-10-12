@@ -1,0 +1,36 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+*.egg-info/
+dist/
+build/
+*.egg
+
+# Virtual environment
+venv/
+env/
+.venv/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Experiments results (keep .gitkeep)
+Source/experiments/results/*.csv
+Source/experiments/results/*.png
+Source/experiments/results/*.jpg
+
+# Report build
+report/*.aux
+report/*.log
+report/*.out
+report/*.toc
+report/*.synctex.gz
