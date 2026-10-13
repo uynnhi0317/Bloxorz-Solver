@@ -27,10 +27,3 @@ Thumbs.db
 Source/experiments/results/*.csv
 Source/experiments/results/*.png
 Source/experiments/results/*.jpg
-
-# Report build
-report/*.aux
-report/*.log
-report/*.out
-report/*.toc
-report/*.synctex.gz
