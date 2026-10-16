@@ -1,4 +1,4 @@
-from dataclasses import dataclass  
+from dataclasses import dataclass
 from enum import Enum
 from typing import Optional, Tuple
 
@@ -40,29 +40,30 @@ class State:
         object.__setattr__(self, "orientation", Orientation(self.orientation))
 
         if self.split_positions is not None:
-            object.__setattr__(self, "split_positions", tuple(tuple(p) for p in self.split_positions))
-
-        if self.row < 0 or self.column < 0:
-            raise ValueError("Initial state: Chỉ số cột/dòng phải không âm")
-        
-        if self.split_positions is not None:
-            if len(self.split_positions) != 2:
-                raise ValueError("Initial state: split_positions phải chứa 2 tọa độ cho 2 block")
-            
+            a, b = (tuple(p) for p in self.split_positions)
+            if a == b:
+                raise ValueError("Initial state: 2 block con không được cùng 1 ô")
             if self.controlled_block not in (0, 1):
                 raise ValueError("Initial state: controlled_block chỉ được phép 0/1")
-            
-            if any(r < 0 or c < 0 for r, c in self.split_positions):
-                raise ValueError("Initial state: Tọa độ các block phải không âm")
-            
+
+            # Đồng nhất state - Nếu có 2 block con a và b thì việc đổi control giữa 2 block không làm thay đổi state
+            ctrl = self.controlled_block
+            if b < a:
+                a, b, ctrl = b, a, 1 - ctrl
+            pos = (a, b)
+            object.__setattr__(self, "split_positions", pos)
+            object.__setattr__(self, "controlled_block", ctrl)
+            object.__setattr__(self, "row", pos[ctrl][0])
+            object.__setattr__(self, "column", pos[ctrl][1])
+            object.__setattr__(self, "orientation", Orientation.STANDING)
         elif self.controlled_block != 0:
             raise ValueError("Initial state: controlled_block phải bằng 0 khi không split block")
+        if self.bridge_mask < 0:
+            raise ValueError("Initial state: bridge_mask không âm")
 
     @property
     def position(self) -> Coord:
         """Lấy tọa độ điểm neo của block"""
-        if self.split_positions is not None:
-            return self.split_positions[self.controlled_block]
         return self.row, self.column
 
     @property

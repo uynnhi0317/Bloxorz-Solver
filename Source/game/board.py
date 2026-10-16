@@ -3,7 +3,7 @@ from dataclasses import dataclass, field
 from enum import Enum
 from pathlib import Path
 from typing import Any, Mapping, Optional, Tuple, Union
-from .state import Orientation, State
+from .state import Orientation, State, Coord
 
 """
     Quy ước ký hiệu trong map của board:
@@ -48,6 +48,7 @@ class Tile:
         + effect: ảnh hưởng của switch 
         + targets: chứa các nhóm cầu mà switch điều khiển
         + allows_standing: ô đó có cho phép block đứng không
+        + destinations: 2 ô spawn block con khi block đi vào split switch
         + metadata: thông tin bổ sung dạng key, value (trong trường hợp cần dùng)
     """
     kind: TileType
@@ -56,6 +57,7 @@ class Tile:
     effect: Optional[SwitchEffect] = None
     targets: Tuple[str, ...] = ()
     allows_standing: bool = True
+    destinations: Tuple[Coord, ...] = ()
     metadata: Tuple[Tuple[str, str], ...] = ()
 
     def __post_init__(self) -> None:
@@ -69,6 +71,9 @@ class Tile:
             
             if not self.targets and self.switch_kind != SwitchKind.SPLIT:
                 raise ValueError("Initial board: Switch không tách block phải có cầu kết nối")
+
+            if self.switch_kind == SwitchKind.SPLIT and len(self.destinations) != 2:
+                raise ValueError("Initial board: Split switch phải có đúng 2 tọa độ đích")
             
         elif self.switch_kind is not None or self.effect is not None or self.targets:
             raise ValueError("Initial board: Thông tin liên quan đến switch không hợp lệ")
@@ -77,38 +82,15 @@ class Tile:
             raise ValueError("Initial board: Cầu phải có mã định danh")
 
     @classmethod
-    def from_spec(cls, spec: Union[str, Mapping[str, Any]]) -> "Tile":
-        """Dựng tile dựa trên thông số của mapping hoặc ký tự"""
-        if isinstance(spec, str):
-            # Trường hợp là các tile không kích hoạt thì không cần setup các thông số liên quan
-            # Xử lý riêng đối với switch và cầu
-            aliases = {".": TileType.FLOOR, "#": TileType.VOID, "G": TileType.GOAL, "F": TileType.FRAGILE, 
-                       **{kind.value: kind for kind in TileType}}
-
-            if spec in aliases:
-                kind = aliases[spec]
-                return cls(kind, allows_standing=(kind != TileType.FRAGILE))
-            
-            if spec == "S":
-                return cls(TileType.SWITCH, tile_id="switch", switch_kind=SwitchKind.SOFT, effect=SwitchEffect.TOGGLE, targets=("bridge",))
-            
-            if spec == "H":
-                return cls(TileType.SWITCH, tile_id="switch", switch_kind=SwitchKind.HEAVY, effect=SwitchEffect.TOGGLE, targets=("bridge",))
-
-            if spec == "X":
-                return cls(TileType.SWITCH, tile_id="switch", switch_kind=SwitchKind.SPLIT)
-            
-            if spec == "B":
-                return cls(TileType.BRIDGE, tile_id="bridge")
-            
-            raise ValueError(f"Tile spec: Không xác định được thông số tile")
-
+    def from_spec(cls, spec: Mapping[str, Any]) -> "Tile":
+        """Dựng tile dựa trên thông số của mapping"""
         if not isinstance(spec, Mapping):
-            raise TypeError("Tile spec: Loại tile dữ liệu đầu vào không hợp lệ")
+            raise TypeError("Tile spec: Loại dữ liệu đầu vào của tile không hợp lệ")
 
         # Đọc thông số tile từ mapping
         kind = TileType(spec["type"])
 
+        # Lấy các thuộc tính chung của tile
         common = {"tile_id": spec.get("id"),
                   "allows_standing": bool(spec.get("allows_standing", kind != TileType.FRAGILE)),
                   "metadata": tuple(sorted((str(k), str(v)) for k, v in spec.get("metadata", {}).items()))}
@@ -117,13 +99,15 @@ class Tile:
         if kind == TileType.SWITCH:
             switch_kind = SwitchKind(spec.get("switch", "soft"))
             effect_value = spec.get("effect")
+            destinations = tuple((int(r), int(c)) for r, c in spec.get("destinations", ()))
 
             if effect_value is None and switch_kind != SwitchKind.SPLIT:
                 effect_value = "toggle"
 
             return cls(kind, switch_kind = switch_kind, 
                        effect = SwitchEffect(effect_value) if effect_value is not None else None,
-                       targets = tuple(spec.get("targets", ())), **common)
+                       targets = tuple(spec.get("targets", ())), 
+                       destinations = destinations, **common)
 
         # Trường hợp tile không kích hoạt
         return cls(kind, **common)
@@ -142,7 +126,7 @@ class Board:
         + initial_bridge_mask: dãy bit thể hiện cầu đóng/mở ở trạng thái ban đầu
     """
     tiles: Tuple[Tuple[Tile, ...], ...]
-    start: Tuple[int, int]
+    start: Coord
     name: str = "Untitled"
 
     # Mặc định các cầu được mở
@@ -188,6 +172,20 @@ class Board:
                     if missing:
                         raise ValueError(f"Initial board: Switch điều khiển cầu không có trong sàn chơi: {sorted(missing)}")
 
+        # Kiểm tra đích dịch chuyển của split switch
+        for r, row in enumerate(self.tiles):
+            for c, tile in enumerate(row):
+                if tile.kind != TileType.SWITCH or tile.switch_kind != SwitchKind.SPLIT:
+                    continue
+                for dest in tile.destinations:
+                    if not self.in_bounds(dest):
+                        raise ValueError(f"Initial board: Split switch tại {(r, c)} có đích {dest} nằm ngoài sàn chơi")
+                    dest_tile = self.tile_at(dest)
+                    if dest_tile.kind == TileType.VOID:
+                        raise ValueError(f"Initial board: Split switch tại {(r, c)} có đích {dest} nằm trên ô trống")
+                    if dest_tile.kind == TileType.FRAGILE:
+                        raise ValueError(f"Initial board: Split switch tại {(r, c)} có đích {dest} là gạch dễ vỡ (cube đứng sẽ làm vỡ)")
+
         # Tạo trạng thái các cây cầu đóng/mở bằng chuỗi bit nhị phân
         # - Bit i được bật: Bridge thứ i tương ứng được đóng
         # - Bit i tắt: Bridge thứ i tương ứng mở
@@ -213,12 +211,12 @@ class Board:
         """Lấy chiều rộng của sàn chơi"""
         return len(self.tiles[0])
 
-    def in_bounds(self, coord: Tuple[int, int]) -> bool:
+    def in_bounds(self, coord: Coord) -> bool:
         """Kiểm tra 1 tọa độ thuộc trong sàn chơi"""
         row, col = coord
         return 0 <= row < len(self.tiles) and 0 <= col < len(self.tiles[0])
 
-    def tile_at(self, coord: Tuple[int, int]) -> Tile:
+    def tile_at(self, coord: Coord) -> Tile:
         """Lấy thông tin tile khi có tọa độ"""
         row, col = coord
         if not self.in_bounds(coord):
@@ -231,6 +229,13 @@ class Board:
             return self.bridge_ids.index(bridge_id)
         except ValueError as exc:
             raise KeyError(f"Bridge: Cầu không xác định: {bridge_id}") from exc
+
+    def cells_supported(self, cells: Tuple[Coord, ...]) -> bool:
+        """Kiểm tra mọi ô (cells) đều nằm trong sàn chơi và không phải ô trống"""
+        for cell in cells:
+            if not self.in_bounds(cell) or self.tile_at(cell).kind == TileType.VOID:
+                return False
+        return True
 
     @property
     def initial_state(self) -> State:
@@ -264,8 +269,7 @@ class Board:
             Các trường trong Mapping (JSON):
             - name: tên màn chơi
             - start: vị trí bắt đầu
-            - initial_closed_bridges: danh sách ID cầu bắt đầu ở trạng thái đóng,
-              các cầu còn lại bắt đầu mở
+            - initial_closed_bridges: danh sách ID cầu bắt đầu ở trạng thái đóng, các cầu còn lại bắt đầu mở
             - tiles: mảng 2 chiều gồm các ô, mỗi tile có các trường sau:
                 + type: loại ô
                 + id: mã định danh ô
@@ -308,45 +312,3 @@ class Board:
                 # Load text data (source là data thô)
                 data = json.loads(source)
         return cls.from_dict(data)
-
-    @classmethod
-    def from_text(cls, text: str, start: Optional[Tuple[int, int]] = None, name: str = "Untitled") -> "Board":
-        """
-            Gán thông tin board từ dữ liệu text
-            Xem 'P' như điểm bắt đầu của block
-        """
-        # Đọc dữ liệu từng line trong file
-        lines = [line.strip() for line in text.splitlines() if line.strip()]
-        if not lines:
-            raise ValueError("Text read: Text rỗng")
-
-        # Lấy điểm bắt đầu (`P`)
-        if start is None:
-            found = [(r, c) for r, line in enumerate(lines) for c, ch in enumerate(line) if ch == "P"]
-            if len(found) != 1:
-                raise ValueError("Text read: Chỉ có 1 điểm bắt đầu (`P`) duy nhất")
-            start = found[0]
-
-        # Lấy thông tin từng ô trong sàn chơi
-        rows = []
-        for line in lines:
-            row = []
-            for ch in line:
-                row.append(Tile(TileType.FLOOR) if ch == "P" else Tile.from_spec(ch))
-            rows.append(tuple(row))
-
-        return cls(tuple(rows), start, name)
-
-    @classmethod
-    def from_text_file(cls, source: Union[str, Path], start: Optional[Tuple[int, int]] = None, name: str = "Untitled") -> "Board":
-        """Load file .txt (text) lưu sàn chơi"""
-        # Đọc file text trên đường dẫn
-        if isinstance(source, Path):
-            text = source.read_text(encoding = "utf-8")
-        elif "\n" not in source and "\r" not in source and Path(source).is_file():
-            text = Path(source).read_text(encoding = "utf-8")
-        else:
-            # Đọc file text thô
-            text = source
-
-        return cls.from_text(text, start = start, name = name)
