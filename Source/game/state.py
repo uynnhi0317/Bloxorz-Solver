@@ -23,17 +23,13 @@ class State:
         + bridge_mask: số nguyên đặc trưng cho dãy bit
             - Bit i được bật: Bridge thứ i tương ứng được đóng
             - Bit i tắt: Bridge thứ i tương ứng mở
-        + split_positions: Lưu tọa độ 2 khối block trong trường hợp bị chia thành 2 khối nhỏ
-        + controlled_block: block nào đang được điều khiển
-            - Bằng 0 nếu điều khiển block không bị phân tách/bị phân tách nhưng không phải block con bị dịch chuyển
-            - Bằng 1 nếu điều khiển block con bị phân tách và dịch chuyển đến ô chỉ định
+        + split_positions: Lưu tọa độ chuẩn hóa của 2 khối block trong trường hợp bị chia thành 2 khối nhỏ
     """
     row: int
     column: int
     orientation: Orientation = Orientation.STANDING
     bridge_mask: int = 0
     split_positions: Optional[Tuple[Coord, Coord]] = None
-    controlled_block: int = 0
 
     def __post_init__(self) -> None:
         """Khởi tạo và kiểm tra trạng thái board và check đầu vào dữ liệu"""
@@ -43,22 +39,13 @@ class State:
             a, b = (tuple(p) for p in self.split_positions)
             if a == b:
                 raise ValueError("Initial state: 2 block con không được cùng 1 ô")
-            if self.controlled_block not in (0, 1):
-                raise ValueError("Initial state: controlled_block chỉ được phép 0/1")
-
-            # Đồng nhất state - Nếu có 2 block con a và b thì việc đổi control giữa 2 block không làm thay đổi state
-            # Nghĩa là State (row = a, column = b, controlled_block = 0) sẽ cùng 1 trạng thái với (row = b, column = a, controlled_block = 1)
-            ctrl = self.controlled_block
             if b < a:
-                a, b, ctrl = b, a, 1 - ctrl
+                a, b = b, a
             pos = (a, b)
             object.__setattr__(self, "split_positions", pos)
-            object.__setattr__(self, "controlled_block", ctrl)
-            object.__setattr__(self, "row", pos[ctrl][0])
-            object.__setattr__(self, "column", pos[ctrl][1])
+            object.__setattr__(self, "row", a[0])
+            object.__setattr__(self, "column", a[1])
             object.__setattr__(self, "orientation", Orientation.STANDING)
-        elif self.controlled_block != 0:
-            raise ValueError("Initial state: controlled_block phải bằng 0 khi không split block")
         if self.bridge_mask < 0:
             raise ValueError("Initial state: bridge_mask không âm")
 
@@ -87,9 +74,9 @@ class State:
         return ((self.row, self.column), (self.row + 1, self.column))
 
     @classmethod
-    def split(cls, first: Coord, second: Coord, controlled_block: int = 0, bridge_mask: int = 0) -> "State":
+    def split(cls, first: Coord, second: Coord, bridge_mask: int = 0) -> "State":
         """Chuyển trạng thái mới cho block được phân chia"""
-        return cls(first[0], first[1], Orientation.STANDING, bridge_mask, (first, second), controlled_block)
+        return cls(first[0], first[1], Orientation.STANDING, bridge_mask, (first, second))
 
     def toggle_bridge(self, bridge_index: int) -> "State":
         """Đảo trạng thái cầu (đóng sang mở và ngược lại)."""
@@ -97,13 +84,11 @@ class State:
             raise ValueError("Bridge toggle: Chỉ số của bridge không âm")
         
         mask = self.bridge_mask ^ (1 << bridge_index)
-        return State(self.row, self.column, self.orientation, mask, self.split_positions, self.controlled_block)
+        return State(self.row, self.column, self.orientation, mask, self.split_positions)
 
-    def switch_control(self) -> "State":
-        """Đổi điều khiển giữa 2 block con khi đang trong trạng thái bị phân chia"""
-        if self.split_positions is None:
-            return self
+    # def switch_control(self) -> "State":
+    #     """Đổi điều khiển giữa 2 block con khi đang trong trạng thái bị phân chia"""
+    #     if self.split_positions is None:
+    #         return self
 
-        new_ctrl = 1 - self.controlled_block
-        r, c = self.split_positions[new_ctrl]
-        return State(r, c, Orientation.STANDING, self.bridge_mask, self.split_positions, new_ctrl)
+    #     return self
