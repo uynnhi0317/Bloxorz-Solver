@@ -74,6 +74,12 @@ class Tile:
 
             if self.switch_kind == SwitchKind.SPLIT and len(self.destinations) != 2:
                 raise ValueError("Initial board: Split switch phải có đúng 2 tọa độ đích")
+
+            if self.switch_kind == SwitchKind.SPLIT and self.targets:
+                raise ValueError("Initial board: Split switch không điều khiển cầu")
+            
+            if self.switch_kind == SwitchKind.SPLIT and self.effect is not None:
+                raise ValueError("Initial board: Split switch không có effect")
             
         elif self.switch_kind is not None or self.effect is not None or self.targets:
             raise ValueError("Initial board: Thông tin liên quan đến switch không hợp lệ")
@@ -127,6 +133,7 @@ class Board:
     """
     tiles: Tuple[Tuple[Tile, ...], ...]
     start: Coord
+    goal: Coord = field(init = False)
     name: str = "Untitled"
 
     # Mặc định các cầu được mở
@@ -156,6 +163,19 @@ class Board:
         
         if self.tile_at(self.start).kind == TileType.VOID:
             raise ValueError("Initial board: Vị trí bắt đầu không thể nằm ở ô trống")
+
+        # Thiết lập thông tin về đích 
+        goals = [(r, c) for r, row in enumerate(self.tiles) for c, tile in enumerate(row) if tile.kind == TileType.GOAL]
+        if len(goals) != 1:
+            raise ValueError(f"Initial board: Sàn chơi phải có đúng 1 ô goal, hiện có {len(goals)}")
+        object.__setattr__(self, "goal", goals[0])
+
+        if not self.in_bounds(self.goal):
+            raise ValueError(f"Initial board: Vị trí đích nằm ngoài sàn chơi {self.goal}")
+    
+        if self.tile_at(self.goal).kind == TileType.VOID:
+            raise ValueError("Initial board: Vị trí đích không thể nằm ở ô trống")
+
 
         # Thiết lập id cho cầu và switch
         bridge_ids = tuple(sorted({t.tile_id for row in self.tiles for t in row if t.kind == TileType.BRIDGE and t.tile_id}))
@@ -230,13 +250,6 @@ class Board:
         except ValueError as exc:
             raise KeyError(f"Bridge: Cầu không xác định: {bridge_id}") from exc
 
-    def cells_supported(self, cells: Tuple[Coord, ...]) -> bool:
-        """Kiểm tra mọi ô (cells) đều nằm trong sàn chơi và không phải ô trống"""
-        for cell in cells:
-            if not self.in_bounds(cell) or self.tile_at(cell).kind == TileType.VOID:
-                return False
-        return True
-
     @property
     def initial_state(self) -> State:
         """Tạo cấu hình ban đầu của sàn chơi với trạng thái khởi tạo của các cây cầu"""
@@ -246,29 +259,11 @@ class Board:
     def from_dict(cls, data: Mapping[str, Any]) -> "Board":
         """
             Gắn thông tin dữ liệu sàn chơi từ file Mapping.
-            
-            Cấu trúc file Mapping (từ JSON):
-            {
-                "name": ...
-                "start": ...,
-                "tiles": [
-                    [
-                        {"type": ...},
-                        {"type": ..., ...},
-                        {"type": ..., "supports_standing": ..., ...}
-                    ],
-                    [
-                        ...
-                    ],
-                    [
-                        ...
-                    ]
-                ]
-            }
 
             Các trường trong Mapping (JSON):
             - name: tên màn chơi
             - start: vị trí bắt đầu
+            - goal: đích đến
             - initial_closed_bridges: danh sách ID cầu bắt đầu ở trạng thái đóng, các cầu còn lại bắt đầu mở
             - tiles: mảng 2 chiều gồm các ô, mỗi tile có các trường sau:
                 + type: loại ô
@@ -301,14 +296,23 @@ class Board:
     @classmethod
     def from_json(cls, source: Union[str, Path]) -> "Board":
         """Đọc file JSON text hoặc có đường dẫn dẫn tới"""
-        # Đọc file JSON nằm theo đường dẫn
-        if isinstance(source, Path):
-            data = json.loads(source.read_text(encoding="utf-8"))
-        else:
-            candidate = Path(source)
-            if "\n" not in source and candidate.exists():
-                data = json.loads(candidate.read_text(encoding="utf-8"))
-            else:
-                # Load text data (source là data thô)
-                data = json.loads(source)
+        # source là chuỗi JSON text
+        if isinstance(source, str) and source.lstrip().startswith("{"):
+            text = source
+            origin = "Chuỗi JSON"
+        else: # source là path str hoặc là Path
+            path = Path(source)
+            if not path.is_file():
+                raise FileNotFoundError(f"JSON Content: Không tìm thấy file stage: {path}")
+            text = path.read_text(encoding="utf-8")
+            origin = str(path)
+
+        try:
+            data = json.loads(text)
+        except json.JSONDecodeError as exc:
+            raise ValueError(f"JSON Content: {origin} không phải JSON hợp lệ: {exc}") from exc
+
+        if not isinstance(data, Mapping):
+            raise ValueError(f"JSON Content: {origin} phải là một object JSON ở cấp ngoài cùng")
+
         return cls.from_dict(data)

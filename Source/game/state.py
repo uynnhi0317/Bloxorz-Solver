@@ -47,6 +47,7 @@ class State:
                 raise ValueError("Initial state: controlled_block chỉ được phép 0/1")
 
             # Đồng nhất state - Nếu có 2 block con a và b thì việc đổi control giữa 2 block không làm thay đổi state
+            # Nghĩa là State (row = a, column = b, controlled_block = 0) sẽ cùng 1 trạng thái với (row = b, column = a, controlled_block = 1)
             ctrl = self.controlled_block
             if b < a:
                 a, b, ctrl = b, a, 1 - ctrl
@@ -90,17 +91,19 @@ class State:
         """Chuyển trạng thái mới cho block được phân chia"""
         return cls(first[0], first[1], Orientation.STANDING, bridge_mask, (first, second), controlled_block)
 
-    def with_bridge(self, bridge_index: int, enabled: bool) -> "State":
-        """
-            Chuyển trạng thái khi cầu được mở/đóng
-            enable=True/False -> cầu đóng/mở
-        """
+    def toggle_bridge(self, bridge_index: int) -> "State":
+        """Đảo trạng thái cầu (đóng sang mở và ngược lại)."""
         if bridge_index < 0:
-            raise ValueError("State: Chỉ số của bridge không âm")
-
-        # Nếu cần mở cầu i -> AND với ~ (bit 1 thứ i)
-        # Nếu cần đóng cầu i -> OR với bit 1 thứ i
-        bit = 1 << bridge_index
-        mask = self.bridge_mask | bit if enabled else self.bridge_mask & ~bit
-
+            raise ValueError("Bridge toggle: Chỉ số của bridge không âm")
+        
+        mask = self.bridge_mask ^ (1 << bridge_index)
         return State(self.row, self.column, self.orientation, mask, self.split_positions, self.controlled_block)
+
+    def switch_control(self) -> "State":
+        """Đổi điều khiển giữa 2 block con khi đang trong trạng thái bị phân chia"""
+        if self.split_positions is None:
+            return self
+
+        new_ctrl = 1 - self.controlled_block
+        r, c = self.split_positions[new_ctrl]
+        return State(r, c, Orientation.STANDING, self.bridge_mask, self.split_positions, new_ctrl)
