@@ -1,0 +1,58 @@
+{
+  "name": "Mẫu màn chơi: Cầu và công tắc",
+  "start": [2, 0],
+  "initial_closed_bridges": ["bridge_a"],
+  "tiles": [
+    [
+      { "type": "void" },
+      { "type": "void" },
+      { "type": "void" },
+      { "type": "void" },
+      { "type": "void" },
+      { "type": "void" },
+      { "type": "void" }
+    ],
+    [
+      { "type": "void" },
+      { "type": "floor" },
+      { "type": "floor" },
+      { "type": "floor" },
+      { "type": "floor" },
+      { "type": "floor" },
+      { "type": "void" }
+    ],
+    [
+      { "type": "floor" },
+      {
+        "type": "switch",
+        "id": "switch_a",
+        "switch": "soft",
+        "effect": "toggle",
+        "targets": ["bridge_a"]
+      },
+      { "type": "floor" },
+      { "type": "fragile", "allows_standing": false },
+      { "type": "bridge", "id": "bridge_a" },
+      { "type": "floor" },
+      { "type": "goal" }
+    ],
+    [
+      { "type": "void" },
+      { "type": "floor" },
+      { "type": "floor" },
+      { "type": "floor" },
+      { "type": "floor" },
+      { "type": "floor" },
+      { "type": "void" }
+    ],
+    [
+      { "type": "void" },
+      { "type": "void" },
+      { "type": "void" },
+      { "type": "void" },
+      { "type": "void" },
+      { "type": "void" },
+      { "type": "void" }
+    ]
+  ]
+}
