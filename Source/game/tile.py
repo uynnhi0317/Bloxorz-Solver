@@ -55,7 +55,7 @@ class Tile:
             if self.switch_kind != SwitchKind.SPLIT and self.effect is None:
                 raise ValueError("Initial board: Switch phải có effect toggle/permanent")
             
-            if not self.targets and self.switch_kind != SwitchKind.SPLIT:
+            if self.switch_kind != SwitchKind.SPLIT and not self.targets:
                 raise ValueError("Initial board: Switch không tách block phải có cầu kết nối")
 
             if self.switch_kind == SwitchKind.SPLIT and len(self.destinations) != 2:
