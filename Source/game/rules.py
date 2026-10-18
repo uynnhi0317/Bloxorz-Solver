@@ -42,13 +42,11 @@ TRANSITIONS = {
 def roll(state: State, direction: Direction) -> State:
     """Trả về trạng thái sau khi di chuyển, chưa xét tính hợp lệ trên board"""
     orientation, row_delta, column_delta = TRANSITIONS[state.orientation][direction]
-    return State(state.row + row_delta, state.column + column_delta, orientation, bridge_mask = state.bridge_mask)
+    return State(state.row + row_delta, state.column + column_delta, orientation, bridge_mask = state.bridge_mask, split_positions = state.split_positions)
 
 def is_supported(board: Board, state: State) -> bool:
     """Kiểm tra tính hợp lệ cơ bản: block có trong board và có nằm trên ô trống không"""
     for cell in state.occupied_cells:
-        if not board.in_bounds(cell):
-            return False
         if board.tile_at(cell).kind == TileType.VOID:
             return False
     return True
