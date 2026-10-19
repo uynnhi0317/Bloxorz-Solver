@@ -86,19 +86,19 @@ Sử dụng format: `<loại>/<mô-tả-ngắn>`
 
 | Tiền tố (prefix) | Mục đích | Ví dụ |
 |---|---|---|
-| `feature/` | Thêm chức năng mới | `feature/bfs-solver` |
+| `feat/` | Thêm chức năng mới | `feat/bfs-solver` |
 | `fix/` | Sửa lỗi | `fix/fragile-tile-crash` |
-| `refactor/` | Tái cấu trúc code (không đổi hành vi) | `refactor/state-hashable` |
+| `ref/` | Tái cấu trúc code (không đổi hành vi) | `ref/state-hashable` |
 | `test/` | Thêm / sửa test | `test/solver-edge-cases` |
 | `docs/` | Cập nhật tài liệu | `docs/update-readme` |
-| `experiment/` | Thử nghiệm benchmark / phân tích | `experiment/heuristic-compare` |
+| `exp/` | Thử nghiệm benchmark / phân tích | `exp/heuristic-compare` |
 
 **Quy tắc chung:**
 - Viết **lowercase**, dùng dấu gạch ngang `-` để phân tách từ
 - Mô tả **ngắn gọn, rõ ràng**
 - **Không** dùng dấu cách, ký tự đặc biệt, tiếng Việt có dấu
-- Ví dụ hợp lệ: `feature/astar-solver`, `fix/goal-test-bug`
-- Ví dụ **không** hợp lệ: `Feature/Add A* Solver`, `fix_bug`, `nhanh-moi`
+- Ví dụ hợp lệ: `feat/astar-solver`, `fix/goal-test-bug`
+- Ví dụ **không** hợp lệ: `Feat/Add A* Solver`, `fix_bug`, `nhanh-moi`
 
 ### 2. Luồng làm việc với nhánh
 
@@ -126,12 +126,12 @@ git add .
 git commit -m "feat: mo ta ngan"
 
 # 3. Push nhánh lên remote
-git push origin feature/ten-tinh-nang
+git push origin feat/ten-tinh-nang
 
 # 4. Tạo Pull Request vào main, chờ review
 
 # 5. Sau khi merge, xoá nhánh
-git branch -d feature/ten-tinh-nang
+git branch -d feat/ten-tinh-nang
 ```
 
 ### 3. Quy tắc viết commit message
