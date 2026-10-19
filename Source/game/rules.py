@@ -44,8 +44,10 @@ def roll(state: State, direction: Direction) -> State:
     orientation, row_delta, column_delta = TRANSITIONS[state.orientation][direction]
     return State(state.row + row_delta, state.column + column_delta, orientation, bridge_mask = state.bridge_mask, split_positions = state.split_positions)
 
-def is_bridge_closed(board: Board, state: State, bridge_id: str) -> bool:
+def is_bridge_closed(board: Board, state: State, bridge_id: Optional[str]) -> bool:
     """Kiểm tra xem cây cầu có mã bridge_id đang đóng (True) hay mở (False)"""
+    if bridge_id is None:
+        return False
     idx = board.bridge_index(bridge_id)
     return bool(state.bridge_mask & (1 << idx))
 
