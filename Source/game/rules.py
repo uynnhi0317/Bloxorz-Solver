@@ -2,7 +2,7 @@ from enum import Enum
 from typing import Optional, Tuple
 from .board import Board
 from .state import Orientation, State
-from .tile import SwitchEffect, SwitchKind, Tile, TileType
+from .tile import SwitchEffect, SwitchKind, Tile, TileType, PermanentState
 
 # Các hướng di chuyển của khối block
 class Direction(str, Enum):
@@ -66,7 +66,7 @@ def is_supported(board: Board, state: State) -> bool:
 
     if not state.is_split and state.orientation == Orientation.STANDING:
         standing_tile = board.tile_at(state.position)
-        if standing_tile.kind == TileType.FRAGILE or not standing_tile.allows_standing:
+        if standing_tile.kind == TileType.FRAGILE:
             return False
     return True
 
@@ -82,9 +82,7 @@ def _is_switch_triggered(state: State, tile: Tile) -> bool:
 
 def _should_permanent_close(tile: Tile) -> bool:
     """Kiểm tra xem công tắc PERMANENT này dùng để đóng cầu hay mở cầu."""
-    meta = dict(tile.metadata)
-    target_state = meta.get("state", "open").lower()
-    return target_state == "closed"
+    return tile.permanent_state == PermanentState.CLOSE
 
 def _apply_switch_effect(board: Board, mask: int, tile: Tile) -> int:
     """Cập nhật dãy bit bridge_mask theo hiệu ứng TOGGLE hoặc PERMANENT của switch"""

@@ -1,6 +1,6 @@
 from dataclasses import dataclass
 from enum import Enum
-from typing import Any, Mapping, Optional, Tuple
+from typing import Any, Mapping, Optional, Tuple, Literal
 from .state import Coord
 
 # Quy định loại tile
@@ -24,6 +24,11 @@ class SwitchEffect(str, Enum):
     TOGGLE = "toggle"
     PERMANENT = "permanent"
 
+# Trạng thái đóng/mở cố định của SwitchPermanent
+class PermanentState(str, Enum):
+    OPEN = "open"
+    CLOSE = "close"
+
 @dataclass(frozen = True, slots = True)
 class Tile:
     """
@@ -33,7 +38,7 @@ class Tile:
         + switch_kind: loại switch
         + effect: ảnh hưởng của switch 
         + targets: chứa các nhóm cầu mà switch điều khiển
-        + allows_standing: ô đó có cho phép block đứng không
+        + permanent_state: trạng thái cầu mà switch PERMANENT đặt
         + destinations: 2 ô spawn block con khi block đi vào split switch
         + metadata: thông tin bổ sung dạng key, value (trong trường hợp cần dùng)
     """
@@ -41,8 +46,8 @@ class Tile:
     tile_id: Optional[str] = None
     switch_kind: Optional[SwitchKind] = None
     effect: Optional[SwitchEffect] = None
+    permanent_state: Optional[PermanentState] = None
     targets: Tuple[str, ...] = ()
-    allows_standing: bool = True
     destinations: Tuple[Coord, ...] = ()
     metadata: Tuple[Tuple[str, str], ...] = ()
 
@@ -66,8 +71,14 @@ class Tile:
             
             if self.switch_kind == SwitchKind.SPLIT and self.effect is not None:
                 raise ValueError("Initial board: Split switch không có effect")
+
+            if self.effect == SwitchEffect.PERMANENT and self.permanent_state is None:
+                raise ValueError("Initial board: Switch PERMANENT phải có permanent_state")
+
+            if self.effect != SwitchEffect.PERMANENT and self.permanent_state is not None:
+                raise ValueError("Initial board: permanent_state chỉ hợp lệ với switch PERMANENT")
             
-        elif self.switch_kind is not None or self.effect is not None or self.targets:
+        elif self.switch_kind is not None or self.effect is not None or self.permanent_state is not None or self.targets:
             raise ValueError("Initial board: Thông tin liên quan đến switch không hợp lệ")
         
         if self.kind == TileType.BRIDGE and not self.tile_id:
@@ -83,9 +94,7 @@ class Tile:
         kind = TileType(spec["type"])
 
         # Lấy các thuộc tính chung của tile
-        common = {"tile_id": spec.get("id"),
-                  "allows_standing": bool(spec.get("allows_standing", kind != TileType.FRAGILE)),
-                  "metadata": tuple(sorted((str(k), str(v)) for k, v in spec.get("metadata", {}).items()))}
+        common = {"tile_id": spec.get("id"), "metadata": tuple(sorted((str(k), str(v)) for k, v in spec.get("metadata", {}).items()))}
 
         # Trường hợp tile là switch thì phải xử lý các thuộc tính liên quan đến kích hoạt
         if kind == TileType.SWITCH:
@@ -96,8 +105,18 @@ class Tile:
             if effect_value is None and switch_kind != SwitchKind.SPLIT:
                 effect_value = "toggle"
 
+            effect = SwitchEffect(effect_value) if effect_value is not None else None
+            permanent_state = None
+            if effect == SwitchEffect.PERMANENT:
+                set_to = spec.get("set_to", "close")
+                try:
+                    permanent_state = PermanentState(set_to)
+                except ValueError as exc:
+                    raise ValueError("Tile spec: set_to của switch PERMANENT phải là 'open' hoặc 'closed'") from exc
+
             return cls(kind, switch_kind = switch_kind, 
-                       effect = SwitchEffect(effect_value) if effect_value is not None else None,
+                       effect = effect,
+                       permanent_state = permanent_state,
                        targets = tuple(spec.get("targets", ())), 
                        destinations = destinations, **common)
 

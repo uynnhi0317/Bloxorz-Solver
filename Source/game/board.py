@@ -5,6 +5,8 @@ from typing import Any, Mapping, Tuple, Union
 from .state import Orientation, State, Coord
 from .tile import Tile, TileType, SwitchKind
 
+VOID_TILE = Tile(TileType.VOID)
+
 @dataclass(frozen = True, slots = True)
 class Board:
     """
@@ -126,7 +128,7 @@ class Board:
         """Lấy thông tin tile khi có tọa độ"""
         row, col = coord
         if not self.in_bounds(coord):
-            return Tile(TileType.VOID)
+            return VOID_TILE
         return self.tiles[row][col]
 
     def bridge_index(self, bridge_id: str) -> int:
@@ -154,10 +156,10 @@ class Board:
             - tiles: mảng 2 chiều gồm các ô, mỗi tile có các trường sau:
                 + type: loại ô
                 + id: mã định danh ô
-                + allows_standing: cho phép đứng trên ô không
                 + metadata: thông tin bổ sung
                 + switch: loại công tắc
                 + effect: ảnh hưởng của công tắc lên cầu
+                + set_to: trạng thái cầu switch PERMANENT đặt (open/closed, mặc định close)
                 + targets: danh sách ID nhóm cầu bị tác động (nếu tile là switch)
         """
         # Lấy thông tin từng ô
