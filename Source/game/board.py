@@ -3,6 +3,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Mapping, Tuple, Union
 from .state import Orientation, State, Coord
+from .context import GameContext
 from .tile import Tile, TileType, SwitchKind, SwitchEffect, PermanentState
 
 VOID_TILE = Tile(TileType.VOID)
@@ -31,9 +32,8 @@ class Board:
     bridge_bit: Mapping[str, int] = field(init = False) # ID cầu -> chuỗi bit tương ứng
 
     # Tọa độ switch -> (m, n, p)
-    # Nếu là TOGGLE: n = 0, p = 0, m lưu chuỗi bit các cầu tác động
-    # Nếu là Permanent CLOSE: m = 0, p = 0, n lưu chuỗi bit các cầu tác động
-    # Nếu là Permanent OPEN: m = 0, n = 0, p lưu chuỗi bit các cầu tác động
+    # switch_masks lưu theo thứ tự (toggle_mask, close_mask, open_mask).
+    # Bit bật trong mọi mask tương ứng với các cầu được tác động.
     switch_masks: Mapping[Coord, Tuple[int, int, int]] = field(init = False)
 
     def __post_init__(self) -> None:
@@ -63,12 +63,6 @@ class Board:
         if len(goals) != 1:
             raise ValueError(f"Initial board: Sàn chơi phải có đúng 1 ô goal, hiện có {len(goals)}")
         object.__setattr__(self, "goal", goals[0])
-
-        if not self.in_bounds(self.goal):
-            raise ValueError(f"Initial board: Vị trí đích nằm ngoài sàn chơi {self.goal}")
-    
-        if self.tile_at(self.goal).kind == TileType.VOID:
-            raise ValueError("Initial board: Vị trí đích không thể nằm ở ô trống")
 
 
         # Thiết lập id cho cầu và switch
@@ -169,6 +163,11 @@ class Board:
         """Tạo cấu hình ban đầu của sàn chơi với trạng thái khởi tạo của các cây cầu"""
         return State(self.start[0], self.start[1], Orientation.STANDING, bridge_mask=self.initial_bridge_mask)
 
+    @property
+    def initial_context(self) -> GameContext:
+        """Tạo context ban đầu để quản lý quyền điều khiển ngoài State"""
+        return GameContext(self.initial_state)
+
     @classmethod
     def from_dict(cls, data: Mapping[str, Any]) -> "Board":
         """
@@ -185,7 +184,7 @@ class Board:
                 + metadata: thông tin bổ sung
                 + switch: loại công tắc
                 + effect: ảnh hưởng của công tắc lên cầu
-                + set_to: trạng thái cầu switch PERMANENT đặt (open/close, mặc định close)
+                + set_to: trạng thái cầu switch PERMANENT đặt (open/closed, mặc định open)
                 + targets: danh sách ID nhóm cầu bị tác động (nếu tile là switch)
         """
         # Lấy thông tin từng ô

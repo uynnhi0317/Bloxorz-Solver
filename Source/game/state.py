@@ -21,8 +21,8 @@ class State:
         + column: chỉ số cột của điểm neo
         + orientation: hướng đặt của block
         + bridge_mask: số nguyên đặc trưng cho dãy bit
-            - Bit i được bật: Bridge thứ i tương ứng được đóng
-            - Bit i tắt: Bridge thứ i tương ứng mở
+            - Bit i bật: Bridge thứ i tương ứng đóng, không cho block di chuyển
+            - Bit i tắt: Bridge thứ i tương ứng mở, cho phép block di chuyển
         + split_positions: Lưu tọa độ chuẩn hóa của 2 khối block trong trường hợp bị chia thành 2 khối nhỏ
     """
     row: int
@@ -85,10 +85,3 @@ class State:
         
         mask = self.bridge_mask ^ (1 << bridge_index)
         return State(self.row, self.column, self.orientation, mask, self.split_positions)
-
-    # def switch_control(self) -> "State":
-    #     """Đổi điều khiển giữa 2 block con khi đang trong trạng thái bị phân chia"""
-    #     if self.split_positions is None:
-    #         return self
-
-    #     return self

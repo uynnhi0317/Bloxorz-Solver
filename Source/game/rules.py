@@ -2,6 +2,7 @@ from enum import Enum
 from typing import Optional, Tuple
 from .board import Board
 from .state import Orientation, State
+from .context import GameContext
 from .tile import SwitchKind, Tile, TileType
 
 # Các hướng di chuyển của khối block
@@ -12,6 +13,34 @@ class Direction(str, Enum):
     RIGHT = "right"
 
 DIRECTIONS = (Direction.UP, Direction.DOWN, Direction.LEFT, Direction.RIGHT)
+DIRECTION_DELTAS = {
+    Direction.UP: (-1, 0),
+    Direction.DOWN: (1, 0),
+    Direction.LEFT: (0, -1),
+    Direction.RIGHT: (0, 1),
+}
+
+class Action(str, Enum):
+    """Hành động trong game: lăn theo hướng hoặc đổi cube được điều khiển."""
+    MOVE_UP = "move_up"
+    MOVE_DOWN = "move_down"
+    MOVE_LEFT = "move_left"
+    MOVE_RIGHT = "move_right"
+    SWITCH_CONTROL = "switch_control"
+
+ACTIONS = (
+    Action.MOVE_UP,
+    Action.MOVE_DOWN,
+    Action.MOVE_LEFT,
+    Action.MOVE_RIGHT,
+    Action.SWITCH_CONTROL,
+)
+ACTION_DIRECTIONS = {
+    Action.MOVE_UP: Direction.UP,
+    Action.MOVE_DOWN: Direction.DOWN,
+    Action.MOVE_LEFT: Direction.LEFT,
+    Action.MOVE_RIGHT: Direction.RIGHT,
+}
 
 """
     - Từ điển lưu trạng thái block khi di chuyển 4 phía
@@ -54,19 +83,21 @@ def is_supported(board: Board, state: State) -> bool:
     """
     Kiểm tra tính hợp lệ cơ bản:
     - Không rơi vào ô VOID
-    - Không đè lên closed BRIDGE
+    - Không thể đi qua cầu đang đóng
     - Không đứng thẳng trên ô FRAGILE
     """
     for cell in state.occupied_cells:
-        if board.tile_at(cell).kind == TileType.VOID:
+        tile = board.tile_at(cell)
+        if tile.kind == TileType.VOID:
             return False
-        if board.tile_at(cell).kind == TileType.BRIDGE and is_bridge_closed(board, state, board.tile_at(cell).tile_id):
+        if tile.kind == TileType.BRIDGE and is_bridge_closed(board, state, tile.tile_id):
             return False
 
-    if not state.is_split and state.orientation == Orientation.STANDING:
-        standing_tile = board.tile_at(state.position)
-        if standing_tile.kind == TileType.FRAGILE:
+    if state.is_split:
+        if any(board.tile_at(cell).kind == TileType.FRAGILE for cell in state.occupied_cells):
             return False
+    elif state.orientation == Orientation.STANDING and board.tile_at(state.position).kind == TileType.FRAGILE:
+        return False
     return True
 
 def _is_switch_triggered(state: State, tile: Tile) -> bool:
@@ -79,44 +110,56 @@ def _is_switch_triggered(state: State, tile: Tile) -> bool:
         return not state.is_split and state.orientation == Orientation.STANDING
     return False
 
-# def _should_permanent_close(tile: Tile) -> bool:
-#     """Kiểm tra xem công tắc PERMANENT này dùng để đóng cầu hay mở cầu."""
-#     return tile.permanent_state == PermanentState.CLOSE
+def _split_at_switch(board: Board, state: State, previous_state: State) -> Optional[State]:
+    """Tách block tại split switch, đặt hai cube ở các ô đích của switch."""
+    if state.is_split:
+        return None
+    newly_occupied = set(state.occupied_cells) - set(previous_state.occupied_cells)
+    for cell in newly_occupied:
+        tile = board.tile_at(cell)
+        if tile.kind == TileType.SWITCH and tile.switch_kind == SwitchKind.SPLIT:
+            return State.split(*tile.destinations, bridge_mask=state.bridge_mask)
+    return None
 
-# def _apply_switch_effect(board: Board, mask: int, tile: Tile) -> int:
-#     """Cập nhật dãy bit bridge_mask theo hiệu ứng TOGGLE hoặc PERMANENT của switch"""
-#     for bridge_id in tile.targets:
-#         idx = board.bridge_index(bridge_id)
-#         bit = 1 << idx
+def _merge_if_adjacent(state: State) -> State:
+    """Ghép hai cube thành block 1x1x2 khi chúng đứng cạnh nhau"""
+    if not state.is_split:
+        return state
+    (r1, c1), (r2, c2) = state.split_positions
+    if r1 == r2 and abs(c1 - c2) == 1:
+        return State(r1, min(c1, c2), Orientation.HORIZONTAL, state.bridge_mask)
+    if c1 == c2 and abs(r1 - r2) == 1:
+        return State(min(r1, r2), c1, Orientation.VERTICAL, state.bridge_mask)
+    return state
 
-#         if tile.effect == SwitchEffect.TOGGLE:
-#             mask = mask ^ bit
+def _move_split_cube(state: State, direction: Direction, selected_cube: Optional[Tuple[int, int]]) -> State:
+    """Di chuyển riêng cube đang được điều khiển một ô theo hướng đã chọn"""
+    dr, dc = DIRECTION_DELTAS[direction]
+    active = selected_cube if selected_cube is not None else state.split_positions[0]
+    target = (active[0] + dr, active[1] + dc)
+    other = next(cell for cell in state.split_positions if cell != active)
+    if target == other:
+        return state
+    return State.split(first = target, second = other, bridge_mask = state.bridge_mask)
 
-#         elif tile.effect == SwitchEffect.PERMANENT:
-#             if _should_permanent_close(tile):
-#                 mask = mask | bit # Đóng cầu cố định
-#             else:
-#                 mask = mask & (~bit) # Mở cầu cố định
-
-#     return mask
-
-def apply_switches(board: Board, state: State) -> State:
+def apply_switches(board: Board, state: State, previous_state: State) -> State:
     """
-        Kiểm tra tất cả các ô block đang chiếm để kích hoạt switch nếu có
+        Kiểm tra các ô mới được block chiếm để kích hoạt switch nếu có
 
-        Tại 1 switch, chỉ có 1 trong 3 biến flip, close, open là chuỗi bit khác 0
-        Do đó có thể áp dụng công thức chung để thay đổi trạng thái của tập hợp các cầu
-        Không quan tâm đó là switch toggle hay permanent, close hay open
+        Tại một switch, chỉ một trong toggle_mask, close_mask, open_mask khác 0.
+        Bit bật biểu thị cầu đóng; bit tắt biểu thị cầu mở.
     """
     new_mask = state.bridge_mask
-    for cell in state.occupied_cells:
+    newly_occupied = set(state.occupied_cells) - set(previous_state.occupied_cells)
+    for cell in newly_occupied:
         entry = board.switch_masks.get(cell)
         if entry is None:
             continue
         if not _is_switch_triggered(state, board.tile_at(cell)):
             continue
-        flip, close, open = entry
-        new_mask = ((new_mask ^ flip) | close) & ~open
+        toggle_mask, close_mask, open_mask = entry
+        # Toggle đảo bit, permanent đặt bit theo trạng thái đích.
+        new_mask = ((new_mask ^ toggle_mask) | close_mask) & ~open_mask
 
     if new_mask == state.bridge_mask:
         return state
@@ -129,36 +172,80 @@ def apply_switches(board: Board, state: State) -> State:
         split_positions=state.split_positions,
     )
 
-def get_next_state(board: Board, state: State, direction: Direction) -> Optional[State]:
-    """Trả về state hợp lệ sau khi di chuyển và kích hoạt switch nếu có"""
+def get_next_state(board: Board, state: State, direction: Direction, selected_cube: Optional[Tuple[int, int]] = None) -> Optional[State]:
+    """Tính cấu hình vật lý tiếp theo; quyền điều khiển được truyền riêng"""
+    # Trường hợp block đang bị phân chia, di chuyển hướng của block con
     if state.is_split:
-        return None
+        next_state = _move_split_cube(state, direction, selected_cube)
+        if next_state == state or not is_supported(board, next_state):
+            return None
+        next_state = _merge_if_adjacent(next_state)
+        next_state = apply_switches(board, next_state, state)
+        return next_state if is_supported(board, next_state) else None
 
+    # Trường hợp block không bị chia
     next_state = roll(state, direction)
     if not is_supported(board, next_state):
         return None
 
-    next_state = apply_switches(board, next_state)
+    # Trường hợp block dẫm lên split switch
+    split_state = _split_at_switch(board, next_state, state)
+    if split_state is not None:
+        if not is_supported(board, split_state):
+            return None
+        split_state = apply_switches(board, split_state, next_state)
+        return split_state if is_supported(board, split_state) else None
+
+    # Trường hợp block dẫm lên soft/heavy switch
+    next_state = apply_switches(board, next_state, state)
+    
     # Kiểm tra lại phòng trường hợp block nằm vừa đè lên switch vừa đè lên cầu đang mở mà sau đó bị switch đó đóng lại
     if not is_supported(board, next_state):
         return None
 
     return next_state
 
-def get_successors(board: Board, state: State) -> Tuple[Tuple[Direction, State], ...]:
+def get_next_context(board: Board, context: GameContext, action: Action | Direction) -> Optional[GameContext]:
+    """Tính bước chơi tiếp theo, giữ quyền điều khiển ngoài State vật lý"""
+    # Nếu đổi điều khiển qua cube khác
+    if action == Action.SWITCH_CONTROL:
+        return context.switch_control() if context.state.is_split else None
+
+    # Nếu di chuyển 4 phía
+    direction = ACTION_DIRECTIONS[action] if isinstance(action, Action) else action
+    next_state = get_next_state(board, context.state, direction, context.selected_cube)
+    if next_state is None:
+        return None
+
+    if not next_state.is_split:
+        # Nếu trạng thái kế tiếp vẫn là block 1x1x2
+        selected_cube = None
+    elif context.state.is_split:
+        # Nếu trạng thái kế tiếp và ngay trước đó là 2 cube riêng lẻ 
+        dr, dc = DIRECTION_DELTAS[direction]
+        selected_cube = (context.selected_cube[0] + dr, context.selected_cube[1] + dc)
+    else:
+        # Nếu tới trạng thái kế tiếp block mới split
+        selected_cube = next_state.split_positions[0]
+
+    return GameContext(next_state, selected_cube)
+
+def get_successors(board: Board, context: GameContext) -> Tuple[Tuple[Action, GameContext], ...]:
     """
-        Liệt kê các nước đi hợp lệ theo 4 hướng di chuyển
+        Liệt kê các nước di chuyển hợp lệ và chuyển quyền điều khiển khi block đã tách
         Trả về: Tuple gồm các cặp thuộc tính tương ứng cho nước đi hợp lệ
         + Hướng lăn để đạt được đến trạng thái hợp lệ
         + Trạng thái hợp lệ
     """
     successors = []
-    for direction in DIRECTIONS:
-        next_state = get_next_state(board, state, direction)
-        if next_state is not None:
-            successors.append((direction, next_state))
+    for action in ACTIONS:
+        next_context = get_next_context(board, context, action)
+        if next_context is not None:
+            successors.append((action, next_context))
     return tuple(successors)
 
-def is_goal(board: Board, state: State) -> bool:
+def is_goal(board: Board, state: State | GameContext) -> bool:
     """Kiểm tra block đứng thẳng trên ô goal"""
+    if isinstance(state, GameContext):
+        state = state.state
     return not state.is_split and state.orientation == Orientation.STANDING and state.position == board.goal
