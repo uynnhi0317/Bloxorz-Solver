@@ -12,7 +12,7 @@ class GameContext:
     selected_cube: Optional[Coord] = None
 
     def __post_init__(self) -> None:
-        if self.state.is_split:
+        if self.state.split_positions is not None:
             selected = tuple(self.selected_cube) if self.selected_cube is not None else self.state.split_positions[0]
             if selected not in self.state.split_positions:
                 raise ValueError("Game context: selected_cube phải là một trong hai block con")
@@ -22,7 +22,7 @@ class GameContext:
 
     def switch_control(self) -> "GameContext":
         """Chọn cube con còn lại mà không làm thay đổi State"""
-        if not self.state.is_split:
+        if self.state.split_positions is None:
             return self
         other = next(cell for cell in self.state.split_positions if cell != self.selected_cube)
         return GameContext(self.state, other)

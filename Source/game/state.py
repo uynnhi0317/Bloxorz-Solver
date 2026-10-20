@@ -55,11 +55,6 @@ class State:
         return self.row, self.column
 
     @property
-    def is_split(self) -> bool:
-        """Kiểm tra block có được phân tách không"""
-        return self.split_positions is not None
-
-    @property
     def occupied_cells(self) -> Tuple[Coord, ...]:
         """Lấy các ô bị block chiếm"""
         if self.split_positions is not None:

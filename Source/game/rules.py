@@ -93,7 +93,7 @@ def is_supported(board: Board, state: State) -> bool:
         if tile.kind == TileType.BRIDGE and is_bridge_closed(board, state, tile.tile_id):
             return False
 
-    if state.is_split:
+    if state.split_positions is not None:
         if any(board.tile_at(cell).kind == TileType.FRAGILE for cell in state.occupied_cells):
             return False
     elif state.orientation == Orientation.STANDING and board.tile_at(state.position).kind == TileType.FRAGILE:
@@ -107,12 +107,12 @@ def _is_switch_triggered(state: State, tile: Tile) -> bool:
     if tile.switch_kind == SwitchKind.SOFT:
         return True
     if tile.switch_kind == SwitchKind.HEAVY:
-        return not state.is_split and state.orientation == Orientation.STANDING
+        return state.split_positions is None and state.orientation == Orientation.STANDING
     return False
 
 def _split_at_switch(board: Board, state: State, previous_state: State) -> Optional[State]:
     """Tách block tại split switch, đặt hai cube ở các ô đích của switch."""
-    if state.is_split:
+    if state.split_positions is not None:
         return None
     newly_occupied = set(state.occupied_cells) - set(previous_state.occupied_cells)
     for cell in newly_occupied:
@@ -123,7 +123,7 @@ def _split_at_switch(board: Board, state: State, previous_state: State) -> Optio
 
 def _merge_if_adjacent(state: State) -> State:
     """Ghép hai cube thành block 1x1x2 khi chúng đứng cạnh nhau"""
-    if not state.is_split:
+    if state.split_positions is None:
         return state
     (r1, c1), (r2, c2) = state.split_positions
     if r1 == r2 and abs(c1 - c2) == 1:
@@ -134,13 +134,15 @@ def _merge_if_adjacent(state: State) -> State:
 
 def _move_split_cube(state: State, direction: Direction, selected_cube: Optional[Tuple[int, int]]) -> State:
     """Di chuyển riêng cube đang được điều khiển một ô theo hướng đã chọn"""
-    dr, dc = DIRECTION_DELTAS[direction]
-    active = selected_cube if selected_cube is not None else state.split_positions[0]
-    target = (active[0] + dr, active[1] + dc)
-    other = next(cell for cell in state.split_positions if cell != active)
-    if target == other:
-        return state
-    return State.split(first = target, second = other, bridge_mask = state.bridge_mask)
+    if state.split_positions:
+        dr, dc = DIRECTION_DELTAS[direction]
+        active = selected_cube if selected_cube is not None else state.split_positions[0]
+        target = (active[0] + dr, active[1] + dc)
+        other = next(cell for cell in state.split_positions if cell != active)
+        if target == other:
+            return state
+        return State.split(first = target, second = other, bridge_mask = state.bridge_mask)
+    return state
 
 def apply_switches(board: Board, state: State, previous_state: State) -> State:
     """
@@ -175,7 +177,7 @@ def apply_switches(board: Board, state: State, previous_state: State) -> State:
 def get_next_state(board: Board, state: State, direction: Direction, selected_cube: Optional[Tuple[int, int]] = None) -> Optional[State]:
     """Tính cấu hình vật lý tiếp theo; quyền điều khiển được truyền riêng"""
     # Trường hợp block đang bị phân chia, di chuyển hướng của block con
-    if state.is_split:
+    if state.split_positions is not None:
         next_state = _move_split_cube(state, direction, selected_cube)
         if next_state == state or not is_supported(board, next_state):
             return None
@@ -209,7 +211,7 @@ def get_next_context(board: Board, context: GameContext, action: Action | Direct
     """Tính bước chơi tiếp theo, giữ quyền điều khiển ngoài State vật lý"""
     # Nếu đổi điều khiển qua cube khác
     if action == Action.SWITCH_CONTROL:
-        return context.switch_control() if context.state.is_split else None
+        return context.switch_control() if context.state.split_positions is not None else None
 
     # Nếu di chuyển 4 phía
     direction = ACTION_DIRECTIONS[action] if isinstance(action, Action) else action
@@ -217,10 +219,10 @@ def get_next_context(board: Board, context: GameContext, action: Action | Direct
     if next_state is None:
         return None
 
-    if not next_state.is_split:
+    if next_state.split_positions is None:
         # Nếu trạng thái kế tiếp vẫn là block 1x1x2
         selected_cube = None
-    elif context.state.is_split:
+    elif context.state.split_positions is not None and context.selected_cube is not None:
         # Nếu trạng thái kế tiếp và ngay trước đó là 2 cube riêng lẻ 
         dr, dc = DIRECTION_DELTAS[direction]
         selected_cube = (context.selected_cube[0] + dr, context.selected_cube[1] + dc)
@@ -248,4 +250,4 @@ def is_goal(board: Board, state: State | GameContext) -> bool:
     """Kiểm tra block đứng thẳng trên ô goal"""
     if isinstance(state, GameContext):
         state = state.state
-    return not state.is_split and state.orientation == Orientation.STANDING and state.position == board.goal
+    return state.split_positions is None and state.orientation == Orientation.STANDING and state.position == board.goal
