@@ -61,7 +61,7 @@
         "id": "switch_close",
         "switch": "heavy",
         "effect": "permanent",
-        "set_to": "closed",
+        "set_to": "close",
         "targets": ["bridge_closed"],
         "destinations": [],
         "metadata": {}
