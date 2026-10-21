@@ -2,7 +2,7 @@ from enum import Enum
 from typing import Optional, Tuple
 from .board import Board
 from .state import Orientation, State
-from .tile import SwitchEffect, SwitchKind, Tile, TileType
+from .tile import SwitchKind, Tile, TileType
 
 # Các hướng di chuyển của khối block
 class Direction(str, Enum):
@@ -48,8 +48,7 @@ def is_bridge_closed(board: Board, state: State, bridge_id: Optional[str]) -> bo
     """Kiểm tra xem cây cầu có mã bridge_id đang đóng (True) hay mở (False)"""
     if bridge_id is None:
         return False
-    idx = board.bridge_index(bridge_id)
-    return bool(state.bridge_mask & (1 << idx))
+    return bool(state.bridge_mask & board.bridge_bit[bridge_id])
 
 def is_supported(board: Board, state: State) -> bool:
     """
@@ -66,7 +65,7 @@ def is_supported(board: Board, state: State) -> bool:
 
     if not state.is_split and state.orientation == Orientation.STANDING:
         standing_tile = board.tile_at(state.position)
-        if standing_tile.kind == TileType.FRAGILE or not standing_tile.allows_standing:
+        if standing_tile.kind == TileType.FRAGILE:
             return False
     return True
 
@@ -80,36 +79,44 @@ def _is_switch_triggered(state: State, tile: Tile) -> bool:
         return not state.is_split and state.orientation == Orientation.STANDING
     return False
 
-def _should_permanent_close(tile: Tile) -> bool:
-    """Kiểm tra xem công tắc PERMANENT này dùng để đóng cầu hay mở cầu."""
-    meta = dict(tile.metadata)
-    target_state = meta.get("state", "open").lower()
-    return target_state == "closed"
+# def _should_permanent_close(tile: Tile) -> bool:
+#     """Kiểm tra xem công tắc PERMANENT này dùng để đóng cầu hay mở cầu."""
+#     return tile.permanent_state == PermanentState.CLOSE
 
-def _apply_switch_effect(board: Board, mask: int, tile: Tile) -> int:
-    """Cập nhật dãy bit bridge_mask theo hiệu ứng TOGGLE hoặc PERMANENT của switch"""
-    for bridge_id in tile.targets:
-        idx = board.bridge_index(bridge_id)
-        bit = 1 << idx
+# def _apply_switch_effect(board: Board, mask: int, tile: Tile) -> int:
+#     """Cập nhật dãy bit bridge_mask theo hiệu ứng TOGGLE hoặc PERMANENT của switch"""
+#     for bridge_id in tile.targets:
+#         idx = board.bridge_index(bridge_id)
+#         bit = 1 << idx
 
-        if tile.effect == SwitchEffect.TOGGLE:
-            mask = mask ^ bit
+#         if tile.effect == SwitchEffect.TOGGLE:
+#             mask = mask ^ bit
 
-        elif tile.effect == SwitchEffect.PERMANENT:
-            if _should_permanent_close(tile):
-                mask = mask | bit # Đóng cầu cố định
-            else:
-                mask = mask & (~bit) # Mở cầu cố định
+#         elif tile.effect == SwitchEffect.PERMANENT:
+#             if _should_permanent_close(tile):
+#                 mask = mask | bit # Đóng cầu cố định
+#             else:
+#                 mask = mask & (~bit) # Mở cầu cố định
 
-    return mask
+#     return mask
 
 def apply_switches(board: Board, state: State) -> State:
-    """Kiểm tra tất cả các ô block đang chiếm để kích hoạt switch nếu có"""
+    """
+        Kiểm tra tất cả các ô block đang chiếm để kích hoạt switch nếu có
+
+        Tại 1 switch, chỉ có 1 trong 3 biến flip, close, open là chuỗi bit khác 0
+        Do đó có thể áp dụng công thức chung để thay đổi trạng thái của tập hợp các cầu
+        Không quan tâm đó là switch toggle hay permanent, close hay open
+    """
     new_mask = state.bridge_mask
     for cell in state.occupied_cells:
-        tile = board.tile_at(cell)
-        if _is_switch_triggered(state, tile):
-            new_mask = _apply_switch_effect(board, new_mask, tile)
+        entry = board.switch_masks.get(cell)
+        if entry is None:
+            continue
+        if not _is_switch_triggered(state, board.tile_at(cell)):
+            continue
+        flip, close, open = entry
+        new_mask = ((new_mask ^ flip) | close) & ~open
 
     if new_mask == state.bridge_mask:
         return state
