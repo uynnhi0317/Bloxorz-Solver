@@ -3,8 +3,8 @@
 Chạy khi đứng từ thư mục Source/:   python -m gui.demo_renderer stages/simple/some_stage.json
 Điều khiển bằng phím mũi tên, bắt đầu lại màn - phím R.
 
-NOTE: render dựa trên output của game.rules.get_next_state, do đó các ô màu cam, công tắc,
-cầu đóng hay box tách đôi chưa thể thể hiện qua preview này.
+NOTE: render dựa trên output của game.rules.get_next_state, do đó box tách đôi
+chưa thể thể hiện qua preview này.
 
 TODO: xóa file này
 """
