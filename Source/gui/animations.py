@@ -7,7 +7,7 @@ from typing import List, Optional, Sequence as Seq, Tuple
 
 import numpy as np
 
-from game import Direction, State, TileType
+from game import Direction, State, TileType, SwitchKind
 from .renderer import PALETTE, Box, Renderer, make_box
 
 # direction -> (axis, sign); axis 0 = row, 1 = col
@@ -52,12 +52,12 @@ class Animation:
 class RollAnimation(Animation):
     """Animation lăn cho cả khối, hay phần nửa khối đang active nếu đang trong trạng thái tách."""
 
-    def __init__(self, renderer: Renderer, before: State, direction: Direction,
-                 moving: int = 0, active: Optional[int] = None, duration_ms: float = 160):
+    def __init__(self, renderer, before, direction, selected_cube=None, duration_ms=160):
         self.r = renderer
         self.mask = before.bridge_mask
         self.axis, self.sign = DIR_AXIS[direction]
-        boxes = renderer.state_boxes(before, active if active is not None else moving)
+        moving = _moving_index(before, selected_cube)
+        boxes = renderer.state_boxes(before, selected_cube)
         self.static = [b for i, b in enumerate(boxes) if i != moving]
         self.mover = boxes[moving]
         end = np.round(rotate(self.mover.verts, self.axis, self.sign, math.pi / 2), 6) + 0.0
@@ -176,26 +176,25 @@ class Sequence(Animation):
 
 
 # --------------------------------------------------------------- factories
-def _moving_index(before: State, direction: Direction, after: State) -> int:
-    """Trả về indexx của khối vừa di chuyển. Nếu không 'tách' --> chỉ có một khối, trả về 0"""
-    if not before.is_split:
+def _moving_index(before: State, selected_cube) -> int:
+    if before.split_positions is None or selected_cube is None:
         return 0
-    dr, dc = DIR_DELTA[direction]
-    cells = set(after.occupied_cells)
-    for i, (r, c) in enumerate(before.split_positions):
-        if (r, c) not in cells and (r + dr, c + dc) in cells:
-            return i
-    return 0
+    try:
+        return before.split_positions.index(tuple(selected_cube))
+    except ValueError:
+        raise ValueError(f"selected_cube {tuple(selected_cube)} không nằm trong "
+                         f"split_positions {before.split_positions}") from None
 
 
-def animate_move(renderer: Renderer, before: State, direction: Direction, after: State,
-                 duration_ms: float = 160) -> Animation:
-    """Animation của nước đi hợp lệ."""
-    roll = RollAnimation(renderer, before, direction,
-                         moving=_moving_index(before, direction, after), duration_ms=duration_ms)
-    if after.is_split and not before.is_split:
-        landed = roll.final_boxes[0].verts   # block vừa lăn xong đang đứng trên split switch
-        origin = (int(round(landed[:, 0].min())), int(round(landed[:, 1].min())))
+def animate_move(renderer, before, direction, after, selected_cube=None, duration_ms=160):
+    roll = RollAnimation(renderer, before, direction, selected_cube=selected_cube,
+                         duration_ms=duration_ms)
+    if after.split_positions is not None and before.split_positions is None:
+        landed = Renderer._cells_under(roll.final_boxes[-1])
+        board = renderer.board
+        origin = next((c for c in landed
+                       if board.tile_at(c).kind == TileType.SWITCH
+                       and board.tile_at(c).switch_kind == SwitchKind.SPLIT), landed[0])
         return Sequence(roll, SpawnAnimation(renderer, after.bridge_mask, origin, after.split_positions))
     return roll
 
@@ -224,7 +223,7 @@ def animate_fall(renderer: Renderer, before: State, direction: Optional[Directio
     if direction is None:
         return DropAnimation(renderer, mask, renderer.state_boxes(before))
     board = renderer.board
-    roll = RollAnimation(renderer, before, direction, moving=moving)
+    roll = RollAnimation(renderer, before, direction    )
     end = roll.final_boxes[-1]
     cells = Renderer._cells_under(end)
     solid = [c for c in cells if _is_floor(board, c, mask)]

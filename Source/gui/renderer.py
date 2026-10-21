@@ -15,7 +15,7 @@ from typing import List, Optional, Sequence, Tuple
 import numpy as np
 import pygame
 
-from game import Board, Orientation, State, SwitchKind, Tile, TileType
+from game import Board, Orientation, State, SwitchKind, Tile, TileType, Coord
 
 Color = Tuple[int, int, int]
 
@@ -167,23 +167,23 @@ class Renderer:
         return [(r, c) for r in range(r0, r1) for c in range(c0, c1)]
 
     # ------------------------------------------------------------ public API
-    def state_boxes(self, state: State, active: Optional[int] = None) -> List[Box]:
-        """Vẽ khối rắn cho mỗi trạng thái của khối hộp"""
-        if state.is_split:
-            active = 0 if active is None else active
+    def state_boxes(self, state: State, selected_cube: Optional[Coord] = None) -> List[Box]:
+        if state.split_positions is not None:
+            active = tuple(selected_cube) if selected_cube is not None else state.split_positions[0]
             return [
                 Box(make_box(r, c, 0, 1, 1, 1),
-                    PALETTE["cube_active"] if i == active else PALETTE["cube_idle"])
-                for i, (r, c) in enumerate(state.split_positions)
+                    PALETTE["cube_active"] if (r, c) == active else PALETTE["cube_idle"])
+                for r, c in state.split_positions
             ]
         dims = {Orientation.STANDING: (1, 1, 2),
                 Orientation.HORIZONTAL: (1, 2, 1),
                 Orientation.VERTICAL: (2, 1, 1)}[state.orientation]
         return [Box(make_box(state.row, state.column, 0, *dims), PALETTE["block"])]
 
-    def draw(self, surface: pygame.Surface, state: State, active: Optional[int] = None) -> None:
-        """Vẽ cảnh ()"""
-        self.draw_scene(surface, state.bridge_mask, self.state_boxes(state, active))
+    def draw(self, surface, state, selected_cube: Optional[Coord] = None) -> None:
+        if hasattr(state, "state") and hasattr(state, "selected_cube"):  # GameContext
+            state, selected_cube = state.state, state.selected_cube
+        self.draw_scene(surface, state.bridge_mask, self.state_boxes(state, selected_cube))
 
     def draw_scene(self, surface: pygame.Surface, bridge_mask: int, boxes: Sequence[Box],
                    alpha: int = 255) -> None:
