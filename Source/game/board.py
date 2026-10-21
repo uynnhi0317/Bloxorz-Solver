@@ -3,7 +3,9 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Mapping, Tuple, Union
 from .state import Orientation, State, Coord
-from .tile import Tile, TileType, SwitchKind
+from .tile import Tile, TileType, SwitchKind, SwitchEffect, PermanentState
+
+VOID_TILE = Tile(TileType.VOID)
 
 @dataclass(frozen = True, slots = True)
 class Board:
@@ -13,7 +15,6 @@ class Board:
         + start: ô bắt đầu
         + name: tên màn chơi
         + bridge_ids: danh sách id của tất cả cầu trên sàn chơi
-        + switch_ids: danh sách id của tất cả switch trên sàn chơi
         + initial_closed_bridges: các cầu đóng ở trạng thái ban đầu
         + initial_bridge_mask: dãy bit thể hiện cầu đóng/mở ở trạng thái ban đầu
     """
@@ -25,8 +26,15 @@ class Board:
     # Mặc định các cầu được mở
     initial_closed_bridges: Tuple[str, ...] = ()
     bridge_ids: Tuple[str, ...] = field(init = False)
-    switch_ids: Tuple[str, ...] = field(init = False)
     initial_bridge_mask: int = field(init = False)
+
+    bridge_bit: Mapping[str, int] = field(init = False) # ID cầu -> chuỗi bit tương ứng
+
+    # Tọa độ switch -> (m, n, p)
+    # Nếu là TOGGLE: n = 0, p = 0, m lưu chuỗi bit các cầu tác động
+    # Nếu là Permanent CLOSE: m = 0, p = 0, n lưu chuỗi bit các cầu tác động
+    # Nếu là Permanent OPEN: m = 0, n = 0, p lưu chuỗi bit các cầu tác động
+    switch_masks: Mapping[Coord, Tuple[int, int, int]] = field(init = False)
 
     def __post_init__(self) -> None:
         """Khởi tạo sàn chơi và chuẩn hóa/kiểm tra dữ liệu"""
@@ -65,9 +73,10 @@ class Board:
 
         # Thiết lập id cho cầu và switch
         bridge_ids = tuple(sorted({t.tile_id for row in self.tiles for t in row if t.kind == TileType.BRIDGE and t.tile_id}))
-        switch_ids = tuple(sorted({t.tile_id for row in self.tiles for t in row if t.kind == TileType.SWITCH and t.tile_id}))
         object.__setattr__(self, "bridge_ids", bridge_ids)
-        object.__setattr__(self, "switch_ids", switch_ids)
+
+        bridge_bit = {bid: 1 << i for i, bid in enumerate(bridge_ids)}
+        object.__setattr__(self, "bridge_bit", bridge_bit)
 
         # Raise error trong trường hợp targets của switch là cầu mà id không nằm trong bridge_ids
         known = set(bridge_ids)
@@ -77,6 +86,25 @@ class Board:
                     missing = set(tile.targets) - known
                     if missing:
                         raise ValueError(f"Initial board: Switch điều khiển cầu không có trong sàn chơi: {sorted(missing)}")
+
+        # Thiết lập switch_masks
+        switch_masks = {}
+        for r, row in enumerate(self.tiles):
+            for c, tile in enumerate(row):
+                if tile.kind != TileType.SWITCH or tile.switch_kind == SwitchKind.SPLIT:
+                    continue
+
+                m = 0
+                for bid in tile.targets:
+                    m |= bridge_bit[bid]
+
+                if tile.effect == SwitchEffect.TOGGLE:
+                    switch_masks[(r, c)] = (m, 0, 0)
+                elif tile.permanent_state == PermanentState.CLOSE:
+                    switch_masks[(r, c)] = (0, m, 0)
+                else:
+                    switch_masks[(r, c)] = (0, 0, m)
+        object.__setattr__(self, "switch_masks", switch_masks)
 
         # Kiểm tra đích dịch chuyển của split switch
         for r, row in enumerate(self.tiles):
@@ -104,7 +132,7 @@ class Board:
         
         initial_mask = 0
         for bridge_id in self.initial_closed_bridges:
-            initial_mask |= 1 << bridge_ids.index(bridge_id)
+            initial_mask |= bridge_bit[bridge_id]
         object.__setattr__(self, "initial_bridge_mask", initial_mask)
 
     @property
@@ -126,7 +154,7 @@ class Board:
         """Lấy thông tin tile khi có tọa độ"""
         row, col = coord
         if not self.in_bounds(coord):
-            return Tile(TileType.VOID)
+            return VOID_TILE
         return self.tiles[row][col]
 
     def bridge_index(self, bridge_id: str) -> int:
@@ -154,10 +182,10 @@ class Board:
             - tiles: mảng 2 chiều gồm các ô, mỗi tile có các trường sau:
                 + type: loại ô
                 + id: mã định danh ô
-                + allows_standing: cho phép đứng trên ô không
                 + metadata: thông tin bổ sung
                 + switch: loại công tắc
                 + effect: ảnh hưởng của công tắc lên cầu
+                + set_to: trạng thái cầu switch PERMANENT đặt (open/close, mặc định close)
                 + targets: danh sách ID nhóm cầu bị tác động (nếu tile là switch)
         """
         # Lấy thông tin từng ô
