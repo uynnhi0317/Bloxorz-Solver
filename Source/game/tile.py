@@ -112,7 +112,7 @@ class Tile:
                 try:
                     permanent_state = PermanentState(set_to)
                 except ValueError as exc:
-                    raise ValueError("Tile spec: set_to của switch PERMANENT phải là 'open' hoặc 'closed'") from exc
+                    raise ValueError("Tile spec: set_to của switch PERMANENT phải là 'open' hoặc 'close'") from exc
 
             return cls(kind, switch_kind = switch_kind, 
                        effect = effect,

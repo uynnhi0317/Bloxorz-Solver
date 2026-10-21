@@ -3,7 +3,6 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Mapping, Tuple, Union
 from .state import Orientation, State, Coord
-from .context import GameContext
 from .tile import Tile, TileType, SwitchKind, SwitchEffect, PermanentState
 
 VOID_TILE = Tile(TileType.VOID)
@@ -163,11 +162,6 @@ class Board:
         """Tạo cấu hình ban đầu của sàn chơi với trạng thái khởi tạo của các cây cầu"""
         return State(self.start[0], self.start[1], Orientation.STANDING, bridge_mask=self.initial_bridge_mask)
 
-    @property
-    def initial_context(self) -> GameContext:
-        """Tạo context ban đầu để quản lý quyền điều khiển ngoài State"""
-        return GameContext(self.initial_state)
-
     @classmethod
     def from_dict(cls, data: Mapping[str, Any]) -> "Board":
         """
@@ -184,7 +178,7 @@ class Board:
                 + metadata: thông tin bổ sung
                 + switch: loại công tắc
                 + effect: ảnh hưởng của công tắc lên cầu
-                + set_to: trạng thái cầu switch PERMANENT đặt (open/closed, mặc định open)
+                + set_to: trạng thái cầu switch PERMANENT đặt (open/close, mặc định open)
                 + targets: danh sách ID nhóm cầu bị tác động (nếu tile là switch)
         """
         # Lấy thông tin từng ô

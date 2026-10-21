@@ -2,23 +2,7 @@ from enum import Enum
 from typing import Optional, Tuple
 from .board import Board
 from .state import Orientation, State
-from .context import GameContext
 from .tile import SwitchKind, Tile, TileType
-
-# Các hướng di chuyển của khối block
-class Direction(str, Enum):
-    UP = "up"
-    DOWN = "down"
-    LEFT = "left"
-    RIGHT = "right"
-
-DIRECTIONS = (Direction.UP, Direction.DOWN, Direction.LEFT, Direction.RIGHT)
-DIRECTION_DELTAS = {
-    Direction.UP: (-1, 0),
-    Direction.DOWN: (1, 0),
-    Direction.LEFT: (0, -1),
-    Direction.RIGHT: (0, 1),
-}
 
 class Action(str, Enum):
     """Hành động trong game: lăn theo hướng hoặc đổi cube được điều khiển."""
@@ -28,18 +12,16 @@ class Action(str, Enum):
     MOVE_RIGHT = "move_right"
     SWITCH_CONTROL = "switch_control"
 
+MOVE_ACTIONS = (Action.MOVE_UP, Action.MOVE_DOWN, Action.MOVE_LEFT, Action.MOVE_RIGHT)
 ACTIONS = (
-    Action.MOVE_UP,
-    Action.MOVE_DOWN,
-    Action.MOVE_LEFT,
-    Action.MOVE_RIGHT,
+    *MOVE_ACTIONS,
     Action.SWITCH_CONTROL,
 )
-ACTION_DIRECTIONS = {
-    Action.MOVE_UP: Direction.UP,
-    Action.MOVE_DOWN: Direction.DOWN,
-    Action.MOVE_LEFT: Direction.LEFT,
-    Action.MOVE_RIGHT: Direction.RIGHT,
+DIRECTION_DELTAS = {
+    Action.MOVE_UP: (-1, 0),
+    Action.MOVE_DOWN: (1, 0),
+    Action.MOVE_LEFT: (0, -1),
+    Action.MOVE_RIGHT: (0, 1),
 }
 
 """
@@ -49,29 +31,29 @@ ACTION_DIRECTIONS = {
 """
 TRANSITIONS = {
     Orientation.STANDING: {
-        Direction.UP: (Orientation.VERTICAL, -2, 0),
-        Direction.DOWN: (Orientation.VERTICAL, 1, 0),
-        Direction.LEFT: (Orientation.HORIZONTAL, 0, -2),
-        Direction.RIGHT: (Orientation.HORIZONTAL, 0, 1),
+        Action.MOVE_UP: (Orientation.VERTICAL, -2, 0),
+        Action.MOVE_DOWN: (Orientation.VERTICAL, 1, 0),
+        Action.MOVE_LEFT: (Orientation.HORIZONTAL, 0, -2),
+        Action.MOVE_RIGHT: (Orientation.HORIZONTAL, 0, 1),
     },
     Orientation.HORIZONTAL: {
-        Direction.UP: (Orientation.HORIZONTAL, -1, 0),
-        Direction.DOWN: (Orientation.HORIZONTAL, 1, 0),
-        Direction.LEFT: (Orientation.STANDING, 0, -1),
-        Direction.RIGHT: (Orientation.STANDING, 0, 2),
+        Action.MOVE_UP: (Orientation.HORIZONTAL, -1, 0),
+        Action.MOVE_DOWN: (Orientation.HORIZONTAL, 1, 0),
+        Action.MOVE_LEFT: (Orientation.STANDING, 0, -1),
+        Action.MOVE_RIGHT: (Orientation.STANDING, 0, 2),
     },
     Orientation.VERTICAL: {
-        Direction.UP: (Orientation.STANDING, -1, 0),
-        Direction.DOWN: (Orientation.STANDING, 2, 0),
-        Direction.LEFT: (Orientation.VERTICAL, 0, -1),
-        Direction.RIGHT: (Orientation.VERTICAL, 0, 1),
+        Action.MOVE_UP: (Orientation.STANDING, -1, 0),
+        Action.MOVE_DOWN: (Orientation.STANDING, 2, 0),
+        Action.MOVE_LEFT: (Orientation.VERTICAL, 0, -1),
+        Action.MOVE_RIGHT: (Orientation.VERTICAL, 0, 1),
     },
 }
 
-def roll(state: State, direction: Direction) -> State:
+def roll(state: State, action: Action) -> State:
     """Trả về trạng thái sau khi di chuyển, chưa xét tính hợp lệ trên board"""
-    orientation, row_delta, column_delta = TRANSITIONS[state.orientation][direction]
-    return State(state.row + row_delta, state.column + column_delta, orientation, bridge_mask = state.bridge_mask, split_positions = state.split_positions)
+    orientation, row_delta, column_delta = TRANSITIONS[state.orientation][action]
+    return State(state.row + row_delta, state.column + column_delta, orientation, bridge_mask = state.bridge_mask, split_positions = state.split_positions, selected_cube=state.selected_cube)
 
 def is_bridge_closed(board: Board, state: State, bridge_id: Optional[str]) -> bool:
     """Kiểm tra xem cây cầu có mã bridge_id đang đóng (True) hay mở (False)"""
@@ -93,10 +75,9 @@ def is_supported(board: Board, state: State) -> bool:
         if tile.kind == TileType.BRIDGE and is_bridge_closed(board, state, tile.tile_id):
             return False
 
-    if state.split_positions is not None:
-        if any(board.tile_at(cell).kind == TileType.FRAGILE for cell in state.occupied_cells):
-            return False
-    elif state.orientation == Orientation.STANDING and board.tile_at(state.position).kind == TileType.FRAGILE:
+    # Cube đơn lẻ sau khi tách không làm vỡ fragile tile.
+    # Chỉ block nguyên vẹn khi đứng thẳng mới rơi trên fragile tile.
+    if state.split_positions is None and state.orientation == Orientation.STANDING and board.tile_at(state.position).kind == TileType.FRAGILE:
         return False
     return True
 
@@ -132,16 +113,16 @@ def _merge_if_adjacent(state: State) -> State:
         return State(min(r1, r2), c1, Orientation.VERTICAL, state.bridge_mask)
     return state
 
-def _move_split_cube(state: State, direction: Direction, selected_cube: Optional[Tuple[int, int]]) -> State:
+def _move_split_cube(state: State, action: Action) -> State:
     """Di chuyển riêng cube đang được điều khiển một ô theo hướng đã chọn"""
     if state.split_positions:
-        dr, dc = DIRECTION_DELTAS[direction]
-        active = selected_cube if selected_cube is not None else state.split_positions[0]
+        dr, dc = DIRECTION_DELTAS[action]
+        active = state.selected_cube if state.selected_cube is not None else state.split_positions[0]
         target = (active[0] + dr, active[1] + dc)
         other = next(cell for cell in state.split_positions if cell != active)
         if target == other:
             return state
-        return State.split(first = target, second = other, bridge_mask = state.bridge_mask)
+        return State(state.row, state.column, bridge_mask=state.bridge_mask, split_positions=(target, other), selected_cube=target)
     return state
 
 def apply_switches(board: Board, state: State, previous_state: State) -> State:
@@ -172,13 +153,17 @@ def apply_switches(board: Board, state: State, previous_state: State) -> State:
         state.orientation,
         bridge_mask=new_mask,
         split_positions=state.split_positions,
+        selected_cube=state.selected_cube,
     )
 
-def get_next_state(board: Board, state: State, direction: Direction, selected_cube: Optional[Tuple[int, int]] = None) -> Optional[State]:
-    """Tính cấu hình vật lý tiếp theo; quyền điều khiển được truyền riêng"""
+def get_next_state(board: Board, state: State, action: Action) -> Optional[State]:
+    """Tính trạng thái kế tiếp, bao gồm cấu hình và quyền điều khiển."""
+    if action == Action.SWITCH_CONTROL:
+        return state.switch_control() if state.split_positions is not None else None
+
     # Trường hợp block đang bị phân chia, di chuyển hướng của block con
     if state.split_positions is not None:
-        next_state = _move_split_cube(state, direction, selected_cube)
+        next_state = _move_split_cube(state, action)
         if next_state == state or not is_supported(board, next_state):
             return None
         next_state = _merge_if_adjacent(next_state)
@@ -186,7 +171,7 @@ def get_next_state(board: Board, state: State, direction: Direction, selected_cu
         return next_state if is_supported(board, next_state) else None
 
     # Trường hợp block không bị chia
-    next_state = roll(state, direction)
+    next_state = roll(state, action)
     if not is_supported(board, next_state):
         return None
 
@@ -200,54 +185,27 @@ def get_next_state(board: Board, state: State, direction: Direction, selected_cu
 
     # Trường hợp block dẫm lên soft/heavy switch
     next_state = apply_switches(board, next_state, state)
-    
+
     # Kiểm tra lại phòng trường hợp block nằm vừa đè lên switch vừa đè lên cầu đang mở mà sau đó bị switch đó đóng lại
     if not is_supported(board, next_state):
         return None
 
     return next_state
 
-def get_next_context(board: Board, context: GameContext, action: Action | Direction) -> Optional[GameContext]:
-    """Tính bước chơi tiếp theo, giữ quyền điều khiển ngoài State vật lý"""
-    # Nếu đổi điều khiển qua cube khác
-    if action == Action.SWITCH_CONTROL:
-        return context.switch_control() if context.state.split_positions is not None else None
-
-    # Nếu di chuyển 4 phía
-    direction = ACTION_DIRECTIONS[action] if isinstance(action, Action) else action
-    next_state = get_next_state(board, context.state, direction, context.selected_cube)
-    if next_state is None:
-        return None
-
-    if next_state.split_positions is None:
-        # Nếu trạng thái kế tiếp vẫn là block 1x1x2
-        selected_cube = None
-    elif context.state.split_positions is not None and context.selected_cube is not None:
-        # Nếu trạng thái kế tiếp và ngay trước đó là 2 cube riêng lẻ 
-        dr, dc = DIRECTION_DELTAS[direction]
-        selected_cube = (context.selected_cube[0] + dr, context.selected_cube[1] + dc)
-    else:
-        # Nếu tới trạng thái kế tiếp block mới split
-        selected_cube = next_state.split_positions[0]
-
-    return GameContext(next_state, selected_cube)
-
-def get_successors(board: Board, context: GameContext) -> Tuple[Tuple[Action, GameContext], ...]:
+def get_successors(board: Board, state: State) -> Tuple[Tuple[Action, State], ...]:
     """
-        Liệt kê các nước di chuyển hợp lệ và chuyển quyền điều khiển khi block đã tách
+        Liệt kê các nước di chuyển hợp lệ và chuyển quyền điều khiển khi block đã tách.
         Trả về: Tuple gồm các cặp thuộc tính tương ứng cho nước đi hợp lệ
         + Hướng lăn để đạt được đến trạng thái hợp lệ
         + Trạng thái hợp lệ
     """
     successors = []
     for action in ACTIONS:
-        next_context = get_next_context(board, context, action)
-        if next_context is not None:
-            successors.append((action, next_context))
+        next_state = get_next_state(board, state, action)
+        if next_state is not None:
+            successors.append((action, next_state))
     return tuple(successors)
 
-def is_goal(board: Board, state: State | GameContext) -> bool:
+def is_goal(board: Board, state: State) -> bool:
     """Kiểm tra block đứng thẳng trên ô goal"""
-    if isinstance(state, GameContext):
-        state = state.state
     return state.split_positions is None and state.orientation == Orientation.STANDING and state.position == board.goal
