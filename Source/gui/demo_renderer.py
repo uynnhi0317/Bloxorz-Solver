@@ -1,10 +1,9 @@
 """Preview cho T06.
 
 Chạy khi đứng từ thư mục Source/:   python -m gui.demo_renderer stages/simple/some_stage.json
-Điều khiển bằng phím mũi tên, bắt đầu lại màn - phím R.
+Điều khiển: phím mũi tên để lăn, SPACE để đổi cube khi đang tách, R để chơi lại màn.
 
-NOTE: render dựa trên output của game.rules.get_next_state, do đó box tách đôi
-chưa thể thể hiện qua preview này.
+NOTE: render dựa trên output của game.rules.get_next_state.
 
 TODO: xóa file này
 """
@@ -12,12 +11,13 @@ import sys
 
 import pygame
 
-from game import Direction, get_next_state, is_goal, load_stage
-from gui.animations import Sequence, animate_fall, animate_move, animate_win
+from game import Action, get_next_state, is_goal, load_stage
+from gui.animations import Sequence, animate_fall, animate_move, animate_win, is_bump
 from gui.renderer import Renderer
 
-KEYS = {pygame.K_UP: Direction.UP, pygame.K_DOWN: Direction.DOWN,
-        pygame.K_LEFT: Direction.LEFT, pygame.K_RIGHT: Direction.RIGHT}
+KEYS = {pygame.K_UP: Action.MOVE_UP, pygame.K_DOWN: Action.MOVE_DOWN,
+        pygame.K_LEFT: Action.MOVE_LEFT, pygame.K_RIGHT: Action.MOVE_RIGHT,
+        pygame.K_SPACE: Action.SWITCH_CONTROL}
 
 
 def main(path: str) -> None:
@@ -37,17 +37,22 @@ def main(path: str) -> None:
             if e.type == pygame.KEYDOWN and anim is None:
                 if e.key == pygame.K_r:
                     state = board.initial_state
-                d = KEYS.get(e.key)
-                if d is None:
+                action = KEYS.get(e.key)
+                if action is None:
                     continue
-                nxt = get_next_state(board, state, d)
-                if nxt is None:
-                    anim, pending = animate_fall(renderer, state, d), board.initial_state
+                nxt = get_next_state(board, state, action)
+                if action == Action.SWITCH_CONTROL:  # chỉ đổi cube active, không cần animation
+                    if nxt is not None:
+                        state = nxt
+                elif nxt is None:
+                    if is_bump(state, action):  # cube đâm vào cube kia: bị chặn, không thua
+                        continue
+                    anim, pending = animate_fall(renderer, state, action), board.initial_state
                 elif is_goal(board, nxt):
-                    anim = Sequence(animate_move(renderer, state, d, nxt), animate_win(renderer, nxt))
+                    anim = Sequence(animate_move(renderer, state, action, nxt), animate_win(renderer, nxt))
                     pending = board.initial_state
                 else:
-                    anim, pending = animate_move(renderer, state, d, nxt), nxt
+                    anim, pending = animate_move(renderer, state, action, nxt), nxt
 
         screen.fill((24, 26, 34))
         if anim:

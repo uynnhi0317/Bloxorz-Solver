@@ -167,12 +167,15 @@ class Renderer:
         return [(r, c) for r in range(r0, r1) for c in range(c0, c1)]
 
     # ------------------------------------------------------------ public API
-    def state_boxes(self, state: State, selected_cube: Optional[Coord] = None) -> List[Box]:
+    def state_boxes(self, state: State) -> List[Box]:
+        """Dựng các khối rắn cho mỗi trạng thái.
+        - Đang tách: 2 cube 1x1x1, cube đang được điều khiển (state.selected_cube) có màu active.
+        - Nguyên khối: 1 box 1x1x2 theo orientation.
+        """
         if state.split_positions is not None:
-            active = tuple(selected_cube) if selected_cube is not None else state.split_positions[0]
             return [
                 Box(make_box(r, c, 0, 1, 1, 1),
-                    PALETTE["cube_active"] if (r, c) == active else PALETTE["cube_idle"])
+                    PALETTE["cube_active"] if (r, c) == state.selected_cube else PALETTE["cube_idle"])
                 for r, c in state.split_positions
             ]
         dims = {Orientation.STANDING: (1, 1, 2),
@@ -180,10 +183,9 @@ class Renderer:
                 Orientation.VERTICAL: (2, 1, 1)}[state.orientation]
         return [Box(make_box(state.row, state.column, 0, *dims), PALETTE["block"])]
 
-    def draw(self, surface, state, selected_cube: Optional[Coord] = None) -> None:
-        if hasattr(state, "state") and hasattr(state, "selected_cube"):  # GameContext
-            state, selected_cube = state.state, state.selected_cube
-        self.draw_scene(surface, state.bridge_mask, self.state_boxes(state, selected_cube))
+    def draw(self, surface: pygame.Surface, state: State) -> None:
+        """Vẽ cảnh tĩnh ứng với một state."""
+        self.draw_scene(surface, state.bridge_mask, self.state_boxes(state))
 
     def draw_scene(self, surface: pygame.Surface, bridge_mask: int, boxes: Sequence[Box],
                    alpha: int = 255) -> None:
@@ -254,7 +256,7 @@ class Renderer:
         if kind == TileType.VOID:
             return
         if kind == TileType.BRIDGE:
-            closed = (mask >> self.board.bridge_index(tile.tile_id)) & 1
+            closed = mask & self.board.bridge_bit[tile.tile_id]
             if closed:  # closed bridge = empty space, show a faint outline only
                 self._flat(surface, [(r, c), (r, c + 1), (r + 1, c + 1), (r + 1, c)],
                            PALETTE["bridge_closed_outline"], width=1)
