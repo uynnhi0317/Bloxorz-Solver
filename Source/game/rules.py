@@ -91,15 +91,13 @@ def _is_switch_triggered(state: State, tile: Tile) -> bool:
         return state.split_positions is None and state.orientation == Orientation.STANDING
     return False
 
-def _split_at_switch(board: Board, state: State, previous_state: State) -> Optional[State]:
+def _split_at_switch(board: Board, state: State) -> Optional[State]:
     """Tách block tại split switch, đặt hai cube ở các ô đích của switch."""
-    if state.split_positions is not None:
+    if state.split_positions is not None or state.orientation != Orientation.STANDING:
         return None
-    newly_occupied = set(state.occupied_cells) - set(previous_state.occupied_cells)
-    for cell in newly_occupied:
-        tile = board.tile_at(cell)
-        if tile.kind == TileType.SWITCH and tile.switch_kind == SwitchKind.SPLIT:
-            return State.split(*tile.destinations, bridge_mask=state.bridge_mask)
+    tile = board.tile_at(state.position)
+    if tile.kind == TileType.SWITCH and tile.switch_kind == SwitchKind.SPLIT:
+        return State.split(*tile.destinations, bridge_mask=state.bridge_mask)
     return None
 
 def _merge_if_adjacent(state: State) -> State:
@@ -176,7 +174,7 @@ def get_next_state(board: Board, state: State, action: Action) -> Optional[State
         return None
 
     # Trường hợp block dẫm lên split switch
-    split_state = _split_at_switch(board, next_state, state)
+    split_state = _split_at_switch(board, next_state)
     if split_state is not None:
         if not is_supported(board, split_state):
             return None
