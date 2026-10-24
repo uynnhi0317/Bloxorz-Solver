@@ -21,8 +21,8 @@ class State:
         + column: chỉ số cột của điểm neo
         + orientation: hướng đặt của block
         + bridge_mask: số nguyên đặc trưng cho dãy bit
-            - Bit i được bật: Bridge thứ i tương ứng được đóng
-            - Bit i tắt: Bridge thứ i tương ứng mở
+            - Bit i bật: Bridge thứ i tương ứng đóng, không cho block di chuyển
+            - Bit i tắt: Bridge thứ i tương ứng mở, cho phép block di chuyển
         + split_positions: Lưu tọa độ chuẩn hóa của 2 khối block trong trường hợp bị chia thành 2 khối nhỏ
     """
     row: int
@@ -30,6 +30,7 @@ class State:
     orientation: Orientation = Orientation.STANDING
     bridge_mask: int = 0
     split_positions: Optional[Tuple[Coord, Coord]] = None
+    selected_cube: Optional[Coord] = None
 
     def __post_init__(self) -> None:
         """Khởi tạo và kiểm tra trạng thái board và check đầu vào dữ liệu"""
@@ -46,6 +47,12 @@ class State:
             object.__setattr__(self, "row", a[0])
             object.__setattr__(self, "column", a[1])
             object.__setattr__(self, "orientation", Orientation.STANDING)
+            selected = tuple(self.selected_cube) if self.selected_cube is not None else a
+            if selected not in pos:
+                raise ValueError("Initial state: selected_cube phải là một trong hai block con")
+            object.__setattr__(self, "selected_cube", selected)
+        elif self.selected_cube is not None:
+            raise ValueError("Initial state: selected_cube chỉ hợp lệ khi State đang split")
         if self.bridge_mask < 0:
             raise ValueError("Initial state: bridge_mask không âm")
 
@@ -53,11 +60,6 @@ class State:
     def position(self) -> Coord:
         """Lấy tọa độ điểm neo của block"""
         return self.row, self.column
-
-    @property
-    def is_split(self) -> bool:
-        """Kiểm tra block có được phân tách không"""
-        return self.split_positions is not None
 
     @property
     def occupied_cells(self) -> Tuple[Coord, ...]:
@@ -78,17 +80,17 @@ class State:
         """Chuyển trạng thái mới cho block được phân chia"""
         return cls(first[0], first[1], Orientation.STANDING, bridge_mask, (first, second))
 
+    def switch_control(self) -> "State":
+        """Trả về trạng thái có quyền điều khiển chuyển sang cube còn lại."""
+        if self.split_positions is None:
+            return self
+        other = next(cell for cell in self.split_positions if cell != self.selected_cube)
+        return State(self.row, self.column, self.orientation, self.bridge_mask, self.split_positions, other)
+
     def toggle_bridge(self, bridge_index: int) -> "State":
         """Đảo trạng thái cầu (đóng sang mở và ngược lại)."""
         if bridge_index < 0:
             raise ValueError("Bridge toggle: Chỉ số của bridge không âm")
         
         mask = self.bridge_mask ^ (1 << bridge_index)
-        return State(self.row, self.column, self.orientation, mask, self.split_positions)
-
-    # def switch_control(self) -> "State":
-    #     """Đổi điều khiển giữa 2 block con khi đang trong trạng thái bị phân chia"""
-    #     if self.split_positions is None:
-    #         return self
-
-    #     return self
+        return State(self.row, self.column, self.orientation, mask, self.split_positions, self.selected_cube)

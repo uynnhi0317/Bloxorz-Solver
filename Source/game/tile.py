@@ -63,8 +63,8 @@ class Tile:
             if self.switch_kind != SwitchKind.SPLIT and not self.targets:
                 raise ValueError("Initial board: Switch không tách block phải có cầu kết nối")
 
-            if self.switch_kind == SwitchKind.SPLIT and len(self.destinations) != 2:
-                raise ValueError("Initial board: Split switch phải có đúng 2 tọa độ đích")
+            if self.switch_kind == SwitchKind.SPLIT and (len(self.destinations) != 2 or self.destinations[0] == self.destinations[1]):
+                raise ValueError("Initial board: Split switch phải có đúng 2 tọa độ đích khác nhau")
 
             if self.switch_kind == SwitchKind.SPLIT and self.targets:
                 raise ValueError("Initial board: Split switch không điều khiển cầu")
@@ -108,7 +108,7 @@ class Tile:
             effect = SwitchEffect(effect_value) if effect_value is not None else None
             permanent_state = None
             if effect == SwitchEffect.PERMANENT:
-                set_to = spec.get("set_to", "close")
+                set_to = spec.get("set_to", "open")
                 try:
                     permanent_state = PermanentState(set_to)
                 except ValueError as exc:
