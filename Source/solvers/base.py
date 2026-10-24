@@ -5,7 +5,7 @@ import time
 import tracemalloc
 from typing import Dict, Optional, Sequence, Tuple
 from game.board import Board
-from game.rules import Direction, get_next_state, is_goal
+from game.rules import Action, get_next_state, is_goal
 from game.state import State
 
 @dataclass(frozen = True, slots = True)
@@ -17,7 +17,7 @@ class SolveResult:
         + peak_memory: đỉnh bộ nhớ tiêu thụ thêm trong quá trình giải (tính bằng bytes)
         + expanded_nodes: tổng số trạng thái đã được mở rộng
     """
-    moves: Optional[Tuple[Direction, ...]]
+    moves: Optional[Tuple[Action, ...]]
     time: float
     peak_memory: int
     expanded_nodes: int
@@ -25,7 +25,7 @@ class SolveResult:
     def __post_init__(self) -> None:
         """Chuẩn hóa và kiểm tra dữ liệu đầu vào"""
         if self.moves is not None:
-            object.__setattr__(self, "moves", tuple(Direction(m) for m in self.moves))
+            object.__setattr__(self, "moves", tuple(Action(m) for m in self.moves))
         
         if self.time < 0:
             raise ValueError("SolveResult: Thời gian chạy không được âm")
@@ -53,7 +53,7 @@ class BaseSolver(ABC):
     name: str = "BaseSolver"
 
     @abstractmethod
-    def _search(self, board: Board) -> Tuple[Optional[Sequence[Direction]], int]:
+    def _search(self, board: Board) -> Tuple[Optional[Sequence[Action]], int]:
         """
             Phương thức trừu tượng thực thi thuật toán tìm kiếm cốt lõi.
             Các lớp con kế thừa bắt buộc phải cài đặt phương thức này.
@@ -92,9 +92,9 @@ class BaseSolver(ABC):
 
     @staticmethod
     def reconstruct_path(
-        came_from: Dict[State, Tuple[Optional[State], Optional[Direction]]],
+        came_from: Dict[State, Tuple[Optional[State], Optional[Action]]],
         goal_state: State,
-    ) -> Tuple[Direction, ...]:
+    ) -> Tuple[Action, ...]:
         """
             Hàm tiện ích: Truy vết lại chuỗi hướng đi từ trạng thái đích về trạng thái đầu.
             + came_from: dict ánh xạ state_con -> (state_cha, hướng_đi_tạo_ra_state_con)
@@ -116,7 +116,7 @@ class BaseSolver(ABC):
         return tuple(moves)
 
     @staticmethod
-    def verify_solution(board: Board, moves: Sequence[Direction]) -> bool:
+    def verify_solution(board: Board, moves: Sequence[Action]) -> bool:
         """
             Hàm tiện ích: Kiểm tra một chuỗi bước đi có hợp lệ và dẫn tới đúng ô đích không.
             Hữu ích cho cả unit test (test_solvers.py) và kiểm tra chéo khi chạy benchmark.
