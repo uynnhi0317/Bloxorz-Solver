@@ -28,6 +28,7 @@ class BenchmarkRecord:
     expanded_nodes: int
     time_sec: float
     peak_memory_bytes: int
+    is_valid: Optional[bool] = None
 
     @property
     def time_ms(self) -> float:
@@ -56,11 +57,11 @@ def measure_single(
     board = stage if isinstance(stage, Board) else load_stage(stage)
     result: SolveResult = solver.solve(board)
 
+    is_valid: Optional[bool] = None
     if verify and result.is_solved and result.moves is not None:
-        if not BaseSolver.verify_solution(board, result.moves):
-            raise ValueError(
-                f"Benchmark error: Lời giải của {solver.name} trên màn '{board.name}' không hợp lệ!"
-            )
+        is_valid = BaseSolver.verify_solution(board, result.moves)
+        if not is_valid:
+            print(f"Warning: Lời giải của {solver.name} trên màn '{board.name}' không hợp lệ!")
 
     return BenchmarkRecord(
         stage_category = category,
@@ -71,6 +72,7 @@ def measure_single(
         expanded_nodes = result.expanded_nodes,
         time_sec = result.time,
         peak_memory_bytes = result.peak_memory,
+        is_valid = is_valid,
     )
 
 
@@ -121,6 +123,7 @@ def run_benchmarks(
             print(
                 f"[{category}/{board.name}] {solver.name:<6} | "
                 f"Solved: {str(record.is_solved):<5} | "
+                f"Valid: {str(record.is_valid):<5} | "
                 f"Len: {record.solution_length:<4} | "
                 f"Nodes: {record.expanded_nodes:<7} | "
                 f"Time: {record.time_ms:>8.2f} ms | "
@@ -144,6 +147,7 @@ def save_results_to_csv(
         "stage_name",
         "solver",
         "is_solved",
+        "is_valid",
         "solution_length",
         "expanded_nodes",
         "time_sec",
@@ -161,6 +165,7 @@ def save_results_to_csv(
                 "stage_name": rec.stage_name,
                 "solver": rec.solver_name,
                 "is_solved": rec.is_solved,
+                "is_valid": rec.is_valid,
                 "solution_length": rec.solution_length,
                 "expanded_nodes": rec.expanded_nodes,
                 "time_sec": f"{rec.time_sec:.6f}",
