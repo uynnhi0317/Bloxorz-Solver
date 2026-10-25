@@ -7,7 +7,8 @@ from game.rules import Action, get_successors, is_goal
 from game.state import State
 from solvers.base import BaseSolver
 from solvers.heuristics import HeuristicFactory, point_object_heuristic
-from solvers.ucs import CameFrom, move_cost
+from solvers.base import CameFrom
+from solvers.ucs import move_cost
 
 
 class AStarSolver(BaseSolver):
