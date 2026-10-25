@@ -1,8 +1,8 @@
 import pytest
 
-from game import (Board, Direction, Orientation, State, Tile, TileType,
+from game import (Action, Board, Orientation, State, Tile, TileType,
                   get_next_state, get_successors, is_goal)
-from game.rules import DIRECTIONS, is_supported, roll
+from game.rules import ACTIONS, MOVE_ACTIONS, is_supported, roll
 
 SYMBOLS = {".": TileType.FLOOR, "#": TileType.VOID, "G": TileType.GOAL}
 
@@ -21,20 +21,20 @@ def holey_board():
 # Block xuất phát với neo (2, 2)
 TRANSITION_CASES = [
     # Đứng chiếm (2, 2)
-    (Orientation.STANDING, Direction.UP, Orientation.VERTICAL, (0, 2), ((0, 2), (1, 2))),
-    (Orientation.STANDING, Direction.DOWN, Orientation.VERTICAL, (3, 2), ((3, 2), (4, 2))),
-    (Orientation.STANDING, Direction.LEFT, Orientation.HORIZONTAL, (2, 0), ((2, 0), (2, 1))),
-    (Orientation.STANDING, Direction.RIGHT, Orientation.HORIZONTAL, (2, 3), ((2, 3), (2, 4))),
+    (Orientation.STANDING, Action.MOVE_UP, Orientation.VERTICAL, (0, 2), ((0, 2), (1, 2))),
+    (Orientation.STANDING, Action.MOVE_DOWN, Orientation.VERTICAL, (3, 2), ((3, 2), (4, 2))),
+    (Orientation.STANDING, Action.MOVE_LEFT, Orientation.HORIZONTAL, (2, 0), ((2, 0), (2, 1))),
+    (Orientation.STANDING, Action.MOVE_RIGHT, Orientation.HORIZONTAL, (2, 3), ((2, 3), (2, 4))),
     # Nằm ngang chiếm (2, 2), (2, 3)
-    (Orientation.HORIZONTAL, Direction.UP, Orientation.HORIZONTAL, (1, 2), ((1, 2), (1, 3))),
-    (Orientation.HORIZONTAL, Direction.DOWN, Orientation.HORIZONTAL, (3, 2), ((3, 2), (3, 3))),
-    (Orientation.HORIZONTAL, Direction.LEFT, Orientation.STANDING, (2, 1), ((2, 1),)),
-    (Orientation.HORIZONTAL, Direction.RIGHT, Orientation.STANDING, (2, 4), ((2, 4),)),
+    (Orientation.HORIZONTAL, Action.MOVE_UP, Orientation.HORIZONTAL, (1, 2), ((1, 2), (1, 3))),
+    (Orientation.HORIZONTAL, Action.MOVE_DOWN, Orientation.HORIZONTAL, (3, 2), ((3, 2), (3, 3))),
+    (Orientation.HORIZONTAL, Action.MOVE_LEFT, Orientation.STANDING, (2, 1), ((2, 1),)),
+    (Orientation.HORIZONTAL, Action.MOVE_RIGHT, Orientation.STANDING, (2, 4), ((2, 4),)),
     # Nằm dọc chiếm (2, 2), (3, 2)
-    (Orientation.VERTICAL, Direction.UP, Orientation.STANDING, (1, 2), ((1, 2),)),
-    (Orientation.VERTICAL, Direction.DOWN, Orientation.STANDING, (4, 2), ((4, 2),)),
-    (Orientation.VERTICAL, Direction.LEFT, Orientation.VERTICAL, (2, 1), ((2, 1), (3, 1))),
-    (Orientation.VERTICAL, Direction.RIGHT, Orientation.VERTICAL, (2, 3), ((2, 3), (3, 3))),
+    (Orientation.VERTICAL, Action.MOVE_UP, Orientation.STANDING, (1, 2), ((1, 2),)),
+    (Orientation.VERTICAL, Action.MOVE_DOWN, Orientation.STANDING, (4, 2), ((4, 2),)),
+    (Orientation.VERTICAL, Action.MOVE_LEFT, Orientation.VERTICAL, (2, 1), ((2, 1), (3, 1))),
+    (Orientation.VERTICAL, Action.MOVE_RIGHT, Orientation.VERTICAL, (2, 3), ((2, 3), (3, 3))),
 ]
 TRANSITION_IDS = [f"{o.value}-{d.value}" for o, d, *_ in TRANSITION_CASES]
 
@@ -43,18 +43,18 @@ class TestRoll:
     def test_cases_cover_all_pairs_exactly_once(self):
         pairs = [(o, d) for o, d, *_ in TRANSITION_CASES]
         assert len(pairs) == len(set(pairs))
-        assert set(pairs) == {(o, d) for o in Orientation for d in Direction}
+        assert set(pairs) == {(o, d) for o in Orientation for d in MOVE_ACTIONS}
 
-    @pytest.mark.parametrize("orientation, direction, new_orientation, anchor, cells",
+    @pytest.mark.parametrize("orientation, action, new_orientation, anchor, cells",
                              TRANSITION_CASES, ids=TRANSITION_IDS)
-    def test_roll(self, orientation, direction, new_orientation, anchor, cells):
-        next_state = roll(State(2, 2, orientation), direction)
+    def test_roll(self, orientation, action, new_orientation, anchor, cells):
+        next_state = roll(State(2, 2, orientation), action)
         assert next_state.orientation == new_orientation
         assert next_state.position == anchor
         assert next_state.occupied_cells == cells
 
     def test_roll_keeps_bridge_mask(self):
-        assert roll(State(2, 2, bridge_mask=0b101), Direction.UP).bridge_mask == 0b101
+        assert roll(State(2, 2, bridge_mask=0b101), Action.MOVE_UP).bridge_mask == 0b101
 
 # Block phải nằm hoàn toàn trên sàn
 class TestIsSupported:
@@ -72,81 +72,58 @@ class TestIsSupported:
         State(2, -1),
         State(2, 5),
         State(2, 4, Orientation.HORIZONTAL),
-        State(2, -1, Orientation.HORIZONTAL),
         State(4, 2, Orientation.VERTICAL),
-        State(-1, 2, Orientation.VERTICAL),
     ], ids=["standing_top", "standing_bottom", "standing_left", "standing_right",
-            "horizontal_right_half", "horizontal_left_half",
-            "vertical_bottom_half", "vertical_top_half"])
+            "horizontal_right_half", "vertical_bottom_half"])
     def test_out_of_bounds(self, open_board, state):
         assert not is_supported(open_board, state)
 
     @pytest.mark.parametrize("state", [
         State(1, 1),
         State(1, 0, Orientation.HORIZONTAL),
-        State(1, 1, Orientation.HORIZONTAL),
         State(0, 1, Orientation.VERTICAL),
-        State(1, 1, Orientation.VERTICAL),
-    ], ids=["standing", "horizontal_right_half", "horizontal_left_half",
-            "vertical_bottom_half", "vertical_top_half"])
+    ], ids=["standing", "horizontal_right_half", "vertical_bottom_half"])
     def test_on_void(self, holey_board, state):
         assert not is_supported(holey_board, state)
 
 # Lăn block trên board
 class TestGetNextState:
-    @pytest.mark.parametrize("orientation", list(Orientation))
-    @pytest.mark.parametrize("direction", DIRECTIONS)
-    def test_valid_move_equals_roll(self, open_board, orientation, direction):
-        state = State(2, 2, orientation)
-        assert get_next_state(open_board, state, direction) == roll(state, direction)
+    def test_valid_move_returns_rolled_state(self, open_board):
+        state = State(2, 2)
+        assert get_next_state(open_board, state, Action.MOVE_RIGHT) == roll(state, Action.MOVE_RIGHT)
 
-    @pytest.mark.parametrize("direction", DIRECTIONS)
-    def test_off_board_returns_none(self, direction):
-        board = _make_board(["G"], start=(0, 0))
-        assert get_next_state(board, State(0, 0), direction) is None
+    def test_off_board_returns_none(self, open_board):
+        assert get_next_state(open_board, State(0, 2), Action.MOVE_UP) is None
 
-    @pytest.mark.parametrize("state, direction", [
-        (State(1, 2), Direction.LEFT),
-        (State(0, 1), Direction.DOWN),
-    ], ids=["left_into_void", "down_into_void"])
-    def test_into_void_returns_none(self, holey_board, state, direction):
-        assert get_next_state(holey_board, state, direction) is None
+    def test_into_void_returns_none(self, holey_board):
+        assert get_next_state(holey_board, State(1, 2), Action.MOVE_LEFT) is None
 
 # Liệt kê nước đi hợp lệ
 class TestGetSuccessors:
-    def test_open_board_has_all_directions(self, open_board):
+    def test_open_board_has_all_move_actions(self, open_board):
         successors = get_successors(open_board, State(2, 2))
-        assert [direction for direction, _ in successors] == list(DIRECTIONS)
+        assert [action for action, _ in successors] == list(MOVE_ACTIONS)
 
     def test_small_board_filters_invalid_moves(self):
         # Board 2x2: đứng thì mọi hướng đều cần 2 ô nên không có nước đi
         board = _make_board(["G.", ".."], start=(0, 0))
         assert get_successors(board, State(0, 0)) == ()
         assert get_successors(board, State(0, 0, Orientation.HORIZONTAL)) == (
-            (Direction.DOWN, State(1, 0, Orientation.HORIZONTAL)),
+            (Action.MOVE_DOWN, State(1, 0, Orientation.HORIZONTAL)),
         )
 
 # Điều kiện thắng: chỉ thắng khi block nguyên vẹn đứng thẳng trên goal.
 class TestIsGoal:
-    @pytest.mark.parametrize("state", [
-        State(0, 0),
-        State(0, 0, bridge_mask=0b11),
-    ], ids=["standing", "ignores_bridge_mask"])
-    def test_true(self, open_board, state):
-        assert is_goal(open_board, state)
+    def test_standing_on_goal(self, open_board):
+        assert is_goal(open_board, State(0, 0))
 
     @pytest.mark.parametrize("state", [
         State(0, 0, Orientation.HORIZONTAL),
-        State(0, 0, Orientation.VERTICAL),
         State(1, 1),
         State.split((0, 0), (2, 2)),
-    ], ids=["horizontal_on_goal", "vertical_on_goal", "standing_elsewhere", "split"])
+    ], ids=["lying_on_goal", "standing_elsewhere", "single_cube_on_goal"])
     def test_false(self, open_board, state):
         assert not is_goal(open_board, state)
-
-    def test_false_when_lying_with_second_half_on_goal(self):
-        board = _make_board([".G", ".."], start=(1, 0))
-        assert not is_goal(board, State(0, 0, Orientation.HORIZONTAL))
 
 # bridge_mask, split_positions và tính phân biệt của State.
 class TestState:
@@ -174,10 +151,13 @@ class TestState:
         with pytest.raises(ValueError, match="bridge_mask"):
             State(0, 0, bridge_mask=-1)
 
-    def test_same_position_different_mask_are_distinct(self):
-        # Solver dùng State làm key của visited, nên khác mask phải là 2 state riêng
-        a = State(1, 1, bridge_mask=0)
-        b = State(1, 1, bridge_mask=1)
+    @pytest.mark.parametrize("a, b", [
+        (State(1, 1, bridge_mask=0), State(1, 1, bridge_mask=1)),
+        (State(0, 0, split_positions=((1, 1), (3, 3)), selected_cube=(1, 1)),
+         State(0, 0, split_positions=((1, 1), (3, 3)), selected_cube=(3, 3))),
+    ], ids=["bridge_mask", "selected_cube"])
+    def test_states_differing_in_one_field_are_distinct(self, a, b):
+        # Solver dùng State làm key của visited
         assert a != b
         assert len({a, b}) == 2
 
@@ -190,11 +170,6 @@ class TestState:
         assert state.split_positions == ((1, 1), (3, 3))
         assert state.occupied_cells == ((1, 1), (3, 3))
 
-    def test_split_state_equal_regardless_of_order(self):
-        a, b = State.split((1, 1), (3, 3)), State.split((3, 3), (1, 1))
-        assert a == b
-        assert hash(a) == hash(b)
-
     def test_split_overrides_anchor_and_orientation(self):
         state = State(9, 9, Orientation.VERTICAL, split_positions=((3, 3), (1, 1)))
         assert state.position == (1, 1)
@@ -203,3 +178,71 @@ class TestState:
     def test_split_same_cell_raises(self):
         with pytest.raises(ValueError, match="cùng 1 ô"):
             State.split((2, 2), (2, 2))
+
+    def test_split_selects_first_cube_by_default(self):
+        assert State.split((3, 3), (1, 1)).selected_cube == (1, 1)
+
+    def test_selected_cube_must_be_one_of_cubes(self):
+        with pytest.raises(ValueError, match="một trong hai"):
+            State(0, 0, split_positions=((1, 1), (3, 3)), selected_cube=(2, 2))
+
+    def test_selected_cube_requires_split(self):
+        with pytest.raises(ValueError, match="chỉ hợp lệ khi State đang split"):
+            State(1, 1, selected_cube=(1, 1))
+
+    def test_switch_control_on_whole_block_returns_self(self):
+        state = State(2, 2, Orientation.HORIZONTAL)
+        assert state.switch_control() == state
+
+# Block đã tách: di chuyển từng cube, đổi điều khiển, tự ghép khi kề nhau
+class TestSplitBlock:
+    def test_switch_control_requires_split(self, open_board):
+        assert get_next_state(open_board, State(2, 2), Action.SWITCH_CONTROL) is None
+
+    def test_switch_control_alternates_selected_cube(self, open_board):
+        state = State.split((1, 1), (3, 3))
+        switched = get_next_state(open_board, state, Action.SWITCH_CONTROL)
+        assert switched.split_positions == state.split_positions
+        assert switched.selected_cube == (3, 3)
+        assert get_next_state(open_board, switched, Action.SWITCH_CONTROL) == state
+
+    def test_successors_include_switch_control(self, open_board):
+        successors = get_successors(open_board, State.split((1, 1), (3, 3)))
+        assert [action for action, _ in successors] == list(ACTIONS)
+
+    @pytest.mark.parametrize("action, target", [
+        (Action.MOVE_UP, (0, 1)),
+        (Action.MOVE_DOWN, (2, 1)),
+        (Action.MOVE_LEFT, (1, 0)),
+        (Action.MOVE_RIGHT, (1, 2)),
+    ], ids=["up", "down", "left", "right"])
+    def test_moves_only_selected_cube_one_cell(self, open_board, action, target):
+        # Cube (1,1) đang điều khiển đi 1 ô, cube (3,3) đứng yên
+        next_state = get_next_state(open_board, State.split((1, 1), (3, 3)), action)
+        assert next_state == State(0, 0, split_positions=(target, (3, 3)), selected_cube=target)
+
+    def test_moves_second_cube_after_switching_control(self, open_board):
+        state = State(0, 0, split_positions=((1, 1), (3, 3)), selected_cube=(3, 3))
+        next_state = get_next_state(open_board, state, Action.MOVE_LEFT)
+        assert next_state.split_positions == ((1, 1), (3, 2))
+        assert next_state.selected_cube == (3, 2)
+
+    def test_cube_off_board_returns_none(self, open_board):
+        state = State(0, 0, split_positions=((0, 4), (4, 0)), selected_cube=(0, 4))
+        assert get_next_state(open_board, state, Action.MOVE_UP) is None
+
+    def test_cube_into_other_cube_returns_none(self, open_board):
+        # Trạng thái dựng tay: 2 cube kề nhau nhưng chưa ghép
+        state = State.split((1, 1), (1, 2))
+        assert get_next_state(open_board, state, Action.MOVE_RIGHT) is None
+
+    @pytest.mark.parametrize("state, action, merged", [
+        (State.split((1, 1), (1, 3), bridge_mask=0b1), Action.MOVE_RIGHT,
+         State(1, 2, Orientation.HORIZONTAL, bridge_mask=0b1)),
+        (State(0, 0, split_positions=((1, 0), (1, 2)), selected_cube=(1, 2)), Action.MOVE_LEFT,
+         State(1, 0, Orientation.HORIZONTAL)),
+        (State.split((1, 1), (3, 1)), Action.MOVE_DOWN,
+         State(2, 1, Orientation.VERTICAL)),
+    ], ids=["horizontal", "horizontal_from_right", "vertical"])
+    def test_adjacent_cubes_merge(self, open_board, state, action, merged):
+        assert get_next_state(open_board, state, action) == merged

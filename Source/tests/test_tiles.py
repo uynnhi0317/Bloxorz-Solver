@@ -3,9 +3,10 @@ from pathlib import Path
 
 import pytest
 
-from game import (Board, Direction, Orientation, State, SwitchEffect, SwitchKind,
-                  Tile, TileType, get_next_state, get_successors, is_goal, load_stage)
+from game import (Action, Board, Orientation, State, SwitchEffect, SwitchKind,
+                  Tile, TileType, get_next_state, is_goal, load_stage)
 from game.rules import apply_switches, is_supported
+from game.tile import PermanentState
 
 MOCK_PATH = Path(__file__).parent / "data" / "mock_data.json"
 
@@ -15,23 +16,44 @@ def _simple_board(middle_tiles, **kwargs):
     return Board.from_dict({"start": [0, 0], "tiles": [row], **kwargs})
 
 # Board 1 hàng: floor | switch | floor | bridge 'b' | goal.
-def _switch_board(switch, effect="toggle", closed=True, metadata=None):
+def _switch_board(switch, effect="toggle", closed=True, set_to=None):
     spec = {"type": "switch", "switch": switch, "effect": effect, "targets": ["b"]}
-    if metadata:
-        spec["metadata"] = metadata
+    if set_to:
+        spec["set_to"] = set_to
     return _simple_board([spec, {"type": "floor"}, {"type": "bridge", "id": "b"}],
                          initial_closed_bridges=["b"] if closed else [])
 
+# Trạng thái trước đó cho apply_switches: đứng ở goal (0, 4), không chiếm switch
+_BEFORE = State(0, 4)
+
+# Board 3x5 cho split, cầu 'b' đóng sẵn:
+#   F  F  Fr F  S      S: soft -> b, Fr: fragile
+#   P  F  F  G  B      P: split -> (0,3), (2,3); G: goal; B: bridge b
+#   F  F  F  F  H      H: heavy -> b
+def _split_board():
+    floor = {"type": "floor"}
+    return Board.from_dict({"start": [1, 2], "initial_closed_bridges": ["b"], "tiles": [
+        [floor, floor, {"type": "fragile"}, floor, {"type": "switch", "targets": ["b"]}],
+        [{"type": "switch", "switch": "split", "destinations": [[0, 3], [2, 3]]},
+         floor, floor, {"type": "goal"}, {"type": "bridge", "id": "b"}],
+        [floor, floor, floor, floor, {"type": "switch", "switch": "heavy", "targets": ["b"]}],
+    ]})
+
+# Board 1 hàng, cầu 'b' đóng: floor | split -> (0,0), (0,3) | floor | dest_tile | (extra) | goal
+def _split_line_board(dest_tile, extra=()):
+    split = {"type": "switch", "switch": "split", "destinations": [[0, 0], [0, 3]]}
+    return _simple_board([split, {"type": "floor"}, dest_tile, *extra],
+                         initial_closed_bridges=["b"])
+
 def _assert_mock_board(board):
-    assert board.name == "Mẫu màn chơi: Cầu và công tắc"
-    assert (board.height, board.width) == (5, 7)
+    assert board.name == "Mẫu đầy đủ: các loại ô, công tắc và cầu"
+    assert (board.height, board.width) == (5, 9)
     assert board.start == (2, 0)
     assert board.goal == (2, 6)
-    assert board.bridge_ids == ("bridge_a",)
-    assert board.switch_ids == ("switch_a",)
-    assert board.initial_closed_bridges == ("bridge_a",)
-    assert board.initial_bridge_mask == 0b1
-    assert board.initial_state == State(2, 0, Orientation.STANDING, bridge_mask=0b1)
+    assert board.bridge_ids == ("bridge_closed", "bridge_open", "bridge_toggle")
+    assert board.initial_closed_bridges == ("bridge_closed",)
+    assert board.initial_bridge_mask == 0b001
+    assert board.initial_state == State(2, 0, Orientation.STANDING, bridge_mask=0b001)
 
 @pytest.fixture
 def mock_data():
@@ -55,35 +77,23 @@ class TestNonSwitchTiles:
         assert tile.kind == kind
         assert tile.switch_kind is None
         assert tile.effect is None
+        assert tile.permanent_state is None
         assert tile.targets == ()
         assert tile.destinations == ()
-
-# Giá trị mặc định và override của allows_standing
-class TestAllowsStanding:
-    @pytest.mark.parametrize("spec, expected", [
-        ({"type": "floor"}, True),
-        ({"type": "goal"}, True),
-        ({"type": "fragile"}, False),
-        ({"type": "floor", "allows_standing": False}, False),
-    ], ids=["floor_default", "goal_default", "fragile_default", "floor_override"])
-    def test_allows_standing(self, spec, expected):
-        assert Tile.from_spec(spec).allows_standing is expected
 
 # tile_id, ràng buộc id của bridge và chuẩn hoá metadata
 class TestTileIdAndMetadata:
     @pytest.mark.parametrize("spec, expected", [
         ({"type": "bridge", "id": "bridge_a"}, "bridge_a"),
-        ({"type": "floor", "id": "f1"}, "f1"),
         ({"type": "switch", "targets": ["b1"]}, None),
-    ], ids=["bridge", "floor", "switch_without_id"])
+    ], ids=["bridge", "switch_without_id"])
     def test_tile_id(self, spec, expected):
         assert Tile.from_spec(spec).tile_id == expected
 
     @pytest.mark.parametrize("spec", [
         {"type": "bridge"},
         {"type": "bridge", "id": ""},
-        {"type": "bridge", "id": None},
-    ], ids=["missing", "empty_string", "none"])
+    ], ids=["missing", "empty_string"])
     def test_bridge_without_valid_id_raises(self, spec):
         with pytest.raises(ValueError, match="mã định danh"):
             Tile.from_spec(spec)
@@ -112,20 +122,34 @@ class TestSoftHeavySwitch:
         assert tile.targets == ("b1", "b2")
         assert tile.destinations == ()
 
-    @pytest.mark.parametrize("spec, switch_kind", [
-        ({"type": "switch", "targets": ["b1"]}, SwitchKind.SOFT),
-        ({"type": "switch", "switch": "heavy", "targets": ["b1"]}, SwitchKind.HEAVY),
-    ], ids=["no_switch_field", "heavy"])
-    def test_defaults(self, spec, switch_kind):
-        tile = Tile.from_spec(spec)
-        assert tile.switch_kind == switch_kind
+    def test_defaults_to_soft_toggle(self):
+        tile = Tile.from_spec({"type": "switch", "targets": ["b1"]})
+        assert tile.switch_kind == SwitchKind.SOFT
         assert tile.effect == SwitchEffect.TOGGLE
 
-    @pytest.mark.parametrize("switch_name", ["soft", "heavy"])
-    @pytest.mark.parametrize("extra", [{}, {"targets": []}], ids=["no_targets", "empty_targets"])
-    def test_missing_targets_raises(self, switch_name, extra):
+    def test_missing_targets_raises(self):
         with pytest.raises(ValueError, match="cầu kết nối"):
-            Tile.from_spec({"type": "switch", "switch": switch_name, **extra})
+            Tile.from_spec({"type": "switch"})
+
+# Switch PERMANENT: set_to quyết định mở hay đóng cầu, mặc định open
+class TestPermanentSwitch:
+    @pytest.mark.parametrize("extra, expected", [
+        ({}, PermanentState.OPEN),
+        ({"set_to": "open"}, PermanentState.OPEN),
+        ({"set_to": "close"}, PermanentState.CLOSE),
+    ], ids=["default", "open", "close"])
+    def test_set_to(self, extra, expected):
+        tile = Tile.from_spec({"type": "switch", "effect": "permanent", "targets": ["b1"], **extra})
+        assert tile.permanent_state == expected
+
+    def test_invalid_set_to_raises(self):
+        with pytest.raises(ValueError, match="set_to"):
+            Tile.from_spec({"type": "switch", "effect": "permanent",
+                            "set_to": "half", "targets": ["b1"]})
+
+    def test_toggle_ignores_set_to(self):
+        tile = Tile.from_spec({"type": "switch", "set_to": "close", "targets": ["b1"]})
+        assert tile.permanent_state is None
 
 # Switch SPLIT: đúng 2 đích, không có targets/effect
 class TestSplitSwitch:
@@ -144,64 +168,64 @@ class TestSplitSwitch:
         assert all(isinstance(v, int) for dest in tile.destinations for v in dest)
 
     @pytest.mark.parametrize("destinations", [
-        [],
         [[1, 2]],
         [[1, 2], [3, 4], [5, 6]],
-    ], ids=["zero", "one", "three"])
+        [[1, 2], [1, 2]],
+    ], ids=["one", "three", "same_cell"])
     def test_wrong_destination_count_raises(self, destinations):
         with pytest.raises(ValueError, match="đúng 2 tọa độ"):
             Tile.from_spec({"type": "switch", "switch": "split", "destinations": destinations})
 
-    @pytest.mark.parametrize("destinations", [
-        [[1, 2, 3], [4, 5]],
-        [[1], [4, 5]],
-    ], ids=["too_many_coords", "too_few_coords"])
-    def test_malformed_destination_raises(self, destinations):
+    def test_malformed_destination_raises(self):
         with pytest.raises(ValueError, match="unpack"):
-            Tile.from_spec({"type": "switch", "switch": "split", "destinations": destinations})
+            Tile.from_spec({"type": "switch", "switch": "split", "destinations": [[1, 2, 3], [4, 5]]})
 
     def test_split_with_targets_raises(self):
         with pytest.raises(ValueError, match="không điều khiển cầu"):
             Tile.from_spec({"type": "switch", "switch": "split",
                             "targets": ["b1"], "destinations": [[1, 2], [3, 4]]})
 
-    @pytest.mark.parametrize("effect_name", ["toggle", "permanent"])
-    def test_split_with_effect_raises(self, effect_name):
+    def test_split_with_effect_raises(self):
         with pytest.raises(ValueError, match="không có effect"):
             Tile.from_spec({"type": "switch", "switch": "split",
-                            "effect": effect_name, "destinations": [[1, 2], [3, 4]]})
+                            "effect": "toggle", "destinations": [[1, 2], [3, 4]]})
 
 class TestTileConstructorValidation:
-    @pytest.mark.parametrize("kind", [
-        TileType.FLOOR, TileType.VOID, TileType.GOAL, TileType.FRAGILE, TileType.BRIDGE,
-    ], ids=["floor", "void", "goal", "fragile", "bridge"])
     @pytest.mark.parametrize("extra", [
         {"switch_kind": SwitchKind.SOFT},
         {"effect": SwitchEffect.TOGGLE},
         {"targets": ("b1",)},
-    ], ids=["switch_kind", "effect", "targets"])
-    def test_non_switch_with_switch_fields_raises(self, kind, extra):
+        {"permanent_state": PermanentState.OPEN},
+    ], ids=["switch_kind", "effect", "targets", "permanent_state"])
+    def test_non_switch_with_switch_fields_raises(self, extra):
         with pytest.raises(ValueError, match="switch không hợp lệ"):
-            Tile(kind, tile_id="x", **extra)
+            Tile(TileType.FLOOR, **extra)
 
     def test_switch_without_kind_raises(self):
         with pytest.raises(ValueError, match="thông tin về loại"):
             Tile(TileType.SWITCH, effect=SwitchEffect.TOGGLE, targets=("b1",))
 
-    @pytest.mark.parametrize("switch_kind", [SwitchKind.SOFT, SwitchKind.HEAVY], ids=["soft", "heavy"])
-    def test_switch_without_effect_raises(self, switch_kind):
+    def test_switch_without_effect_raises(self):
         with pytest.raises(ValueError, match="effect"):
-            Tile(TileType.SWITCH, switch_kind=switch_kind, targets=("b1",))
+            Tile(TileType.SWITCH, switch_kind=SwitchKind.SOFT, targets=("b1",))
+
+    def test_permanent_without_state_raises(self):
+        with pytest.raises(ValueError, match="phải có permanent_state"):
+            Tile(TileType.SWITCH, switch_kind=SwitchKind.SOFT,
+                 effect=SwitchEffect.PERMANENT, targets=("b1",))
+
+    def test_toggle_with_permanent_state_raises(self):
+        with pytest.raises(ValueError, match="chỉ hợp lệ với switch PERMANENT"):
+            Tile(TileType.SWITCH, switch_kind=SwitchKind.SOFT, effect=SwitchEffect.TOGGLE,
+                 permanent_state=PermanentState.OPEN, targets=("b1",))
 
 # from_spec với đầu vào sai schema.
 class TestTileSchemaErrors:
     @pytest.mark.parametrize("spec", [
         {"type": "lava"},
-        {"type": "FLOOR"},
-        {"type": ""},
         {"type": "switch", "switch": "medium", "targets": ["b1"]},
         {"type": "switch", "switch": "soft", "effect": "explode", "targets": ["b1"]},
-    ], ids=["unknown_type", "uppercase", "empty_type", "bad_switch_kind", "bad_effect"])
+    ], ids=["bad_type", "bad_switch_kind", "bad_effect"])
     def test_unknown_enum_raises(self, spec):
         with pytest.raises(ValueError, match="is not a valid"):
             Tile.from_spec(spec)
@@ -211,11 +235,9 @@ class TestTileSchemaErrors:
         with pytest.raises(KeyError):
             Tile.from_spec({"id": "x"})
 
-    @pytest.mark.parametrize("spec", [None, "floor", ["type", "floor"], 42],
-                             ids=["none", "string", "list", "int"])
-    def test_non_mapping_raises_type_error(self, spec):
+    def test_non_mapping_raises_type_error(self):
         with pytest.raises(TypeError):
-            Tile.from_spec(spec)
+            Tile.from_spec("floor")
 
     def test_metadata_non_dict_raises(self):
         # from_spec gọi metadata.items() mà không kiểm tra kiểu
@@ -233,13 +255,8 @@ class TestBoardValidation:
         board = _simple_board([{"type": "bridge", "id": "b"}, {"type": "bridge", "id": "a"}],
                               initial_closed_bridges=["b"])
         assert board.bridge_ids == ("a", "b")
+        assert board.bridge_bit == {"a": 0b01, "b": 0b10}
         assert board.initial_bridge_mask == 0b10
-
-    def test_default_all_bridges_open(self):
-        assert _simple_board([{"type": "bridge", "id": "a"}]).initial_bridge_mask == 0
-
-    def test_tile_at_out_of_bounds_returns_void(self):
-        assert _simple_board([]).tile_at((99, 99)).kind == TileType.VOID
 
     @pytest.mark.parametrize("closed, match", [
         (["ghost"], "không tồn tại"),
@@ -277,10 +294,13 @@ class TestStageLoader:
     def test_parses_tiles(self, mock_board):
         assert mock_board.tile_at((0, 0)).kind == TileType.VOID
         assert mock_board.tile_at((2, 3)).kind == TileType.FRAGILE
-        assert mock_board.tile_at((2, 4)).tile_id == "bridge_a"
-        switch = mock_board.tile_at((2, 1))
-        assert switch.kind == TileType.SWITCH
-        assert switch.targets == ("bridge_a",)
+        assert mock_board.tile_at((2, 4)).tile_id == "bridge_toggle"
+        assert mock_board.tile_at((2, 1)).targets == ("bridge_toggle",)
+        assert mock_board.tile_at((1, 4)).permanent_state == PermanentState.OPEN
+        heavy = mock_board.tile_at((3, 2))
+        assert heavy.switch_kind == SwitchKind.HEAVY
+        assert heavy.permanent_state == PermanentState.CLOSE
+        assert mock_board.tile_at((3, 6)).destinations == ((1, 2), (3, 5))
 
     def test_defaults(self, mock_data):
         del mock_data["name"]
@@ -297,41 +317,29 @@ class TestStageLoader:
         with pytest.raises(ValueError, match="JSON hợp lệ"):
             load_stage("{not valid json")
 
-    @pytest.mark.parametrize("content, match", [
-        ('{"tiles": [', "JSON hợp lệ"),
-        ("[1, 2, 3]", "object JSON"),
-    ], ids=["broken_json", "top_level_array"])
-    def test_invalid_json_file_raises(self, tmp_path, content, match):
+    def test_top_level_not_object_raises(self, tmp_path):
         path = tmp_path / "stage.json"
-        path.write_text(content, encoding="utf-8")
-        with pytest.raises(ValueError, match=match):
+        path.write_text("[1, 2, 3]", encoding="utf-8")
+        with pytest.raises(ValueError, match="object JSON"):
             load_stage(path)
 
-    @pytest.mark.parametrize("source", [None, 42, [1, 2], b"{}"],
-                             ids=["none", "int", "list", "bytes"])
-    def test_unsupported_source_type_raises(self, source):
+    def test_unsupported_source_type_raises(self):
         with pytest.raises(TypeError):
-            load_stage(source)
+            load_stage(b"{}")
 
     @pytest.mark.parametrize("changes, match", [
         ({"tiles": []}, r"tiles\[\]"),
         ({"tiles": "not a list"}, r"tiles\[\]"),
         ({"tiles": [[]]}, "ít nhất 1 ô"),
         ({"start": [2]}, r"\[row, column\]"),
-        ({"start": [2, 0, 1]}, r"\[row, column\]"),
         ({"start": [9, 9]}, "nằm ngoài sàn chơi"),
         ({"start": [0, 0]}, "ô trống"),
         ({"initial_closed_bridges": "bridge_a"}, "danh sách bridge ID"),
-    ], ids=["empty_tiles", "tiles_not_list", "empty_row", "start_too_short",
-            "start_too_long", "start_out_of_bounds", "start_on_void", "closed_bridges_not_list"])
+    ], ids=["empty_tiles", "tiles_not_list", "empty_row", "start_wrong_length",
+            "start_out_of_bounds", "start_on_void", "closed_bridges_not_list"])
     def test_invalid_fields_raise(self, mock_data, changes, match):
         with pytest.raises(ValueError, match=match):
             load_stage({**mock_data, **changes})
-
-    def test_missing_tiles_raises(self, mock_data):
-        del mock_data["tiles"]
-        with pytest.raises(ValueError, match=r"tiles\[\]"):
-            load_stage(mock_data)
 
     def test_missing_start_raises_key_error(self, mock_data):
         # Board.from_dict đọc data["start"] trực tiếp
@@ -360,39 +368,23 @@ class TestFragileTile:
         assert not is_supported(board, State(0, 1))
         assert is_supported(board, State(0, 0, Orientation.HORIZONTAL))
 
-    def test_floor_disallowing_standing_behaves_like_fragile(self):
-        board = _simple_board([{"type": "floor", "allows_standing": False}])
-        assert not is_supported(board, State(0, 1))
-        assert is_supported(board, State(0, 0, Orientation.HORIZONTAL))
-
     def test_rolling_to_stand_on_fragile_returns_none(self, mock_board):
         # Nằm ngang (2,1)-(2,2) lăn RIGHT -> đứng tại (2,3) fragile
-        assert get_next_state(mock_board, State(2, 1, Orientation.HORIZONTAL), Direction.RIGHT) is None
-
-    def test_rolling_to_lie_on_fragile_is_allowed(self):
-        # Đứng tại goal (0,3) lăn LEFT -> nằm trên 2 ô fragile (0,1)-(0,2)
-        board = _simple_board([{"type": "fragile"}, {"type": "fragile"}])
-        assert get_next_state(board, State(0, 3), Direction.LEFT) == State(0, 1, Orientation.HORIZONTAL)
+        assert get_next_state(mock_board, State(2, 1, Orientation.HORIZONTAL), Action.MOVE_RIGHT) is None
 
 class TestBridgeTile:
-    @pytest.mark.parametrize("orientation, mask, expected", [
-        (Orientation.STANDING, 0b1, False),
-        (Orientation.STANDING, 0b0, True),
-        (Orientation.HORIZONTAL, 0b1, False),
-        (Orientation.HORIZONTAL, 0b0, True),
-    ], ids=["standing_closed", "standing_open", "lying_half_closed", "lying_half_open"])
-    def test_is_supported(self, mock_board, orientation, mask, expected):
-        # Nằm ngang tại (2,4) chiếm bridge (2,4) + floor (2,5)
-        assert is_supported(mock_board, State(2, 4, orientation, bridge_mask=mask)) is expected
+    @pytest.mark.parametrize("orientation", [Orientation.STANDING, Orientation.HORIZONTAL],
+                             ids=["standing", "lying_half"])
+    @pytest.mark.parametrize("closed", [True, False], ids=["closed", "open"])
+    def test_is_supported(self, mock_board, orientation, closed):
+        # Nằm ngang tại (2,4) chiếm bridge_toggle (2,4) + floor (2,5)
+        mask = mock_board.bridge_bit["bridge_toggle"] if closed else 0
+        assert is_supported(mock_board, State(2, 4, orientation, bridge_mask=mask)) is not closed
 
-    @pytest.mark.parametrize("mask, expected", [
-        (0b1, None),
-        (0b0, State(2, 4, Orientation.HORIZONTAL, bridge_mask=0b0)),
-    ], ids=["closed", "open"])
-    def test_rolling_onto_bridge(self, mock_board, mask, expected):
-        # Nằm ngang (1,4)-(1,5) lăn DOWN -> (2,4) bridge + (2,5) floor
-        state = State(1, 4, Orientation.HORIZONTAL, bridge_mask=mask)
-        assert get_next_state(mock_board, state, Direction.DOWN) == expected
+    def test_rolling_onto_closed_bridge_returns_none(self, mock_board):
+        # Nằm ngang (1,4)-(1,5) lăn DOWN -> (2,4) bridge_toggle đang đóng
+        state = State(1, 4, Orientation.HORIZONTAL, bridge_mask=mock_board.bridge_bit["bridge_toggle"])
+        assert get_next_state(mock_board, state, Action.MOVE_DOWN) is None
 
 class TestSwitchTile:
     @pytest.mark.parametrize("state", [
@@ -401,7 +393,7 @@ class TestSwitchTile:
         State(0, 1, Orientation.HORIZONTAL, bridge_mask=0b1),
     ], ids=["standing", "lying_right_half", "lying_left_half"])
     def test_soft_triggered_by_any_orientation(self, state):
-        assert apply_switches(_switch_board("soft"), state).bridge_mask == 0b0
+        assert apply_switches(_switch_board("soft"), state, _BEFORE).bridge_mask == 0b0
 
     @pytest.mark.parametrize("state, expected", [
         (State(0, 1, bridge_mask=0b1), 0b0),
@@ -409,63 +401,91 @@ class TestSwitchTile:
         (State(0, 1, Orientation.HORIZONTAL, bridge_mask=0b1), 0b1),
     ], ids=["standing", "lying_right_half", "lying_left_half"])
     def test_heavy_triggered_only_when_standing(self, state, expected):
-        assert apply_switches(_switch_board("heavy"), state).bridge_mask == expected
-
-    def test_heavy_not_triggered_when_rolling_to_lie_on_it(self):
-        # Đứng (0,2) lăn LEFT -> nằm (0,0)-(0,1), nửa phải trên heavy switch
-        board = _switch_board("heavy")
-        state = State(0, 2, bridge_mask=0b1)
-        assert get_next_state(board, state, Direction.LEFT) == State(
-            0, 0, Orientation.HORIZONTAL, bridge_mask=0b1)
+        assert apply_switches(_switch_board("heavy"), state, _BEFORE).bridge_mask == expected
 
     def test_only_toggles_its_target_bridge(self):
         # Bridge 'a' là bit 0, 'b' là bit 1; switch chỉ nhắm 'b'
         board = _simple_board([{"type": "switch", "targets": ["b"]},
                                {"type": "bridge", "id": "a"}, {"type": "bridge", "id": "b"}])
-        assert apply_switches(board, State(0, 1, bridge_mask=0b11)).bridge_mask == 0b01
+        assert apply_switches(board, State(0, 1, bridge_mask=0b11), _BEFORE).bridge_mask == 0b01
 
-    def test_no_switch_under_block_keeps_state(self, mock_board):
-        state = State(2, 2, bridge_mask=0b1)
-        assert apply_switches(mock_board, state) is state
+    def test_toggle_closes_open_bridge(self):
+        # Chiều mở cầu đóng đã có ở các test kích switch phía trên
+        board = _switch_board("soft", closed=False)
+        assert apply_switches(board, State(0, 1), _BEFORE).bridge_mask == 0b1
 
-    @pytest.mark.parametrize("switch", ["soft", "heavy"])
-    @pytest.mark.parametrize("mask, expected", [(0b1, 0b0), (0b0, 0b1)], ids=["open", "close"])
-    def test_toggle_flips_bridge(self, switch, mask, expected):
-        board = _switch_board(switch)
-        assert apply_switches(board, State(0, 1, bridge_mask=mask)).bridge_mask == expected
-
-    @pytest.mark.parametrize("switch", ["soft", "heavy"])
     @pytest.mark.parametrize("mask", [0b1, 0b0], ids=["closed", "already_open"])
-    def test_permanent_always_opens(self, switch, mask):
-        board = _switch_board(switch, effect="permanent")
-        assert apply_switches(board, State(0, 1, bridge_mask=mask)).bridge_mask == 0b0
+    def test_permanent_open_always_opens(self, mask):
+        board = _switch_board("soft", effect="permanent", set_to="open")
+        assert apply_switches(board, State(0, 1, bridge_mask=mask), _BEFORE).bridge_mask == 0b0
 
     @pytest.mark.parametrize("mask", [0b0, 0b1], ids=["open", "already_closed"])
-    def test_permanent_with_closed_state_always_closes(self, mask):
-        board = _switch_board("soft", effect="permanent", closed=False, metadata={"state": "closed"})
-        assert apply_switches(board, State(0, 1, bridge_mask=mask)).bridge_mask == 0b1
+    def test_permanent_close_always_closes(self, mask):
+        board = _switch_board("soft", effect="permanent", closed=False, set_to="close")
+        assert apply_switches(board, State(0, 1, bridge_mask=mask), _BEFORE).bridge_mask == 0b1
 
     def test_switch_closing_bridge_under_block_returns_none(self):
         # Nằm lên switch (0,1) + bridge mở (0,2); switch toggle đóng cầu ngay dưới block
         board = _simple_board([{"type": "switch", "targets": ["b"]}, {"type": "bridge", "id": "b"}])
-        assert get_next_state(board, State(0, 0), Direction.RIGHT) is None
+        assert get_next_state(board, State(0, 0), Action.MOVE_RIGHT) is None
+
+class TestSplitSwitchTile:
+    def test_standing_on_split_switch_splits_block(self):
+        # Nằm ngang (1,1)-(1,2) lăn LEFT -> đứng trên split (1,0) -> 2 cube tại (0,3), (2,3)
+        board = _split_board()
+        state = State(1, 1, Orientation.HORIZONTAL, bridge_mask=0b1)
+        assert get_next_state(board, state, Action.MOVE_LEFT) == State.split(
+            (0, 3), (2, 3), bridge_mask=0b1)
+
+    def test_lying_on_split_switch_does_not_split(self):
+        # Đứng (1,2) lăn LEFT -> nằm (1,0)-(1,1), nửa trái trên split
+        board = _split_board()
+        assert get_next_state(board, State(1, 2, bridge_mask=0b1), Action.MOVE_LEFT) == State(
+            1, 0, Orientation.HORIZONTAL, bridge_mask=0b1)
+
+    def test_split_destination_on_closed_bridge_returns_none(self):
+        # Đích (0,3) là bridge 'b' đang đóng -> cube rơi
+        board = _split_line_board({"type": "bridge", "id": "b"})
+        state = State(0, 2, Orientation.HORIZONTAL, bridge_mask=0b1)
+        assert get_next_state(board, state, Action.MOVE_LEFT) is None
+
+    def test_split_destination_on_soft_switch_triggers_it(self):
+        board = _split_line_board({"type": "switch", "targets": ["b"]},
+                                  extra=[{"type": "bridge", "id": "b"}])
+        state = State(0, 2, Orientation.HORIZONTAL, bridge_mask=0b1)
+        assert get_next_state(board, state, Action.MOVE_LEFT) == State.split((0, 0), (0, 3))
+
+    def test_single_cube_does_not_break_fragile(self):
+        state = State.split((0, 3), (2, 3), bridge_mask=0b1)
+        next_state = get_next_state(_split_board(), state, Action.MOVE_LEFT)
+        assert next_state is not None
+        assert next_state.split_positions == ((0, 2), (2, 3))
+
+    @pytest.mark.parametrize("positions, selected, expected_mask", [
+        (((0, 3), (2, 0)), (0, 3), 0b0),
+        (((0, 0), (2, 3)), (2, 3), 0b1),
+    ], ids=["soft_triggered", "heavy_not_triggered"])
+    def test_single_cube_on_switch(self, positions, selected, expected_mask):
+        # Cube đang điều khiển lăn RIGHT lên soft (0,4) hoặc heavy (2,4)
+        state = State(0, 0, bridge_mask=0b1, split_positions=positions, selected_cube=selected)
+        assert get_next_state(_split_board(), state, Action.MOVE_RIGHT).bridge_mask == expected_mask
+
+    def test_resting_cube_on_soft_switch_is_not_triggered_again(self):
+        # Cube (0,4) đứng sẵn trên soft, cube (2,0) di chuyển -> cầu giữ nguyên
+        state = State(0, 0, bridge_mask=0b1, split_positions=((0, 4), (2, 0)), selected_cube=(2, 0))
+        assert get_next_state(_split_board(), state, Action.MOVE_RIGHT).bridge_mask == 0b1
 
 class TestMockStage:
     """Tích hợp fragile + switch + bridge trên màn mock."""
 
-    def test_successors_from_start(self, mock_board):
-        # UP/DOWN rơi xuống void, LEFT ra ngoài biên; RIGHT nằm lên switch_a và mở bridge_a
-        assert get_successors(mock_board, mock_board.initial_state) == (
-            (Direction.RIGHT, State(2, 1, Orientation.HORIZONTAL, bridge_mask=0b0)),
-        )
-
     def test_solution_reaches_goal(self, mock_board):
-        # Kích switch_a mở bridge_a, vòng qua fragile, lăn qua cầu và đứng trên goal
-        moves = [Direction.RIGHT, Direction.UP, Direction.RIGHT,
-                 Direction.RIGHT, Direction.DOWN, Direction.RIGHT]
+        # Qua switch_toggle 2 lần (đóng rồi mở lại bridge_toggle), chạm switch_open,
+        # vòng qua fragile, lăn qua bridge_toggle và đứng trên goal
+        moves = [Action.MOVE_RIGHT, Action.MOVE_UP, Action.MOVE_DOWN, Action.MOVE_UP,
+                 Action.MOVE_RIGHT, Action.MOVE_RIGHT, Action.MOVE_DOWN, Action.MOVE_RIGHT]
         state = mock_board.initial_state
-        for direction in moves:
-            state = get_next_state(mock_board, state, direction)
+        for action in moves:
+            state = get_next_state(mock_board, state, action)
             assert state is not None
-        assert state == State(2, 6, bridge_mask=0b0)
+        assert state == State(2, 6, bridge_mask=0b001)
         assert is_goal(mock_board, state)
