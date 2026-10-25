@@ -1,9 +1,8 @@
 from collections import deque
-from typing import Dict, Optional, Sequence, Tuple
+from typing import Optional, Sequence, Tuple
 
 from game.board import Board
 from game.rules import Action, get_successors, is_goal
-from game.state import State
 from solvers.base import BaseSolver, CameFrom
 
 class BFSSolver(BaseSolver):
