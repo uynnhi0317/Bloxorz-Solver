@@ -4,11 +4,7 @@ from typing import Dict, Optional, Sequence, Tuple
 from game.board import Board
 from game.rules import Action, get_successors, is_goal
 from game.state import State
-from solvers.base import BaseSolver
-
-# came_from[state] = (state cha, hướng đi từ cha); state đầu ánh xạ về (None, None)
-CameFrom = Dict[State, Tuple[Optional[State], Optional[Action]]]
-
+from solvers.base import BaseSolver, CameFrom
 
 class BFSSolver(BaseSolver):
     name = "BFS"
