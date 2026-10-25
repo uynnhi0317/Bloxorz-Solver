@@ -6,7 +6,7 @@ from game.board import Board
 from game.rules import DIRECTION_DELTAS
 from game.state import Coord, Orientation, State
 from game.tile import SwitchKind, TileType
-from solvers.ucs import MIN_MOVE_COST
+from solvers.ucs import MIN_ROLL_COST
 
 Heuristic = Callable[[State], float]
 HeuristicFactory = Callable[[Board], Heuristic]
@@ -45,7 +45,7 @@ def _distances_to_goal(board: Board, passable: Passable) -> Dict[Coord, int]:
 def _make_heuristic(
     board: Board, passable: Passable, orientation_penalty: bool
 ) -> Heuristic:
-    """h = MIN_MOVE_COST * ceil((khoảng cách ô gần goal nhất + phạt) / 2)."""
+    """h =MIN_ROLL_COST  * ceil((khoảng cách ô gần goal nhất + phạt) / 2)."""
     dist = _distances_to_goal(board, passable)
 
     def heuristic(state: State) -> float:
@@ -56,7 +56,7 @@ def _make_heuristic(
                         or state.orientation != Orientation.STANDING)
         penalty = int(orientation_penalty and not_standing)
         # Mỗi action kéo ô gần goal nhất lại gần thêm tối đa 2 ô
-        return MIN_MOVE_COST * math.ceil((min(reachable) + penalty) / 2)
+        return MIN_ROLL_COST * math.ceil((min(reachable) + penalty) / 2)
 
     return heuristic
 

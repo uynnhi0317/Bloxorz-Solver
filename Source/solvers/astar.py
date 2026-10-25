@@ -5,9 +5,8 @@ from typing import Dict, Optional, Sequence, Tuple
 from game.board import Board
 from game.rules import Action, get_successors, is_goal
 from game.state import State
-from solvers.base import BaseSolver
+from solvers.base import BaseSolver, CameFrom
 from solvers.heuristics import HeuristicFactory, point_object_heuristic
-from solvers.base import CameFrom
 from solvers.ucs import move_cost
 
 
