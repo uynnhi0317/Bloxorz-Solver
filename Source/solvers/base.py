@@ -8,6 +8,8 @@ from game.board import Board
 from game.rules import Action, get_next_state, is_goal
 from game.state import State
 
+CameFrom = Dict[State, Tuple[Optional[State], Optional[Action]]]
+
 @dataclass(frozen = True, slots = True)
 class SolveResult:
     """
@@ -92,7 +94,7 @@ class BaseSolver(ABC):
 
     @staticmethod
     def reconstruct_path(
-        came_from: Dict[State, Tuple[Optional[State], Optional[Action]]],
+        came_from: CameFrom,
         goal_state: State,
     ) -> Tuple[Action, ...]:
         """

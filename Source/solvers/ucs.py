@@ -6,17 +6,13 @@ from game.board import Board
 from game.rules import Action, get_next_state, get_successors, is_goal
 from game.state import State
 from game.tile import TileType
-from solvers.base import BaseSolver
+from solvers.base import BaseSolver, CameFrom
 
 NORMAL_COST = 2    # Lăn thông thường
 SWITCH_COST = 1    # Kích switch làm mở ít nhất một cầu
 FRAGILE_COST = 4   # Block đè lên ô fragile
 CONTROL_COST = 1   # Đổi điều khiển khi block tách
 MIN_MOVE_COST = min(NORMAL_COST, SWITCH_COST, FRAGILE_COST, CONTROL_COST)
-
-# came_from[state] = (state cha, action đi từ cha); state đầu ánh xạ về (None, None)
-CameFrom = Dict[State, Tuple[Optional[State], Optional[Action]]]
-
 
 def move_cost(board: Board, parent: State, action: Action, child: State) -> int:
     """Chi phí một action, luôn dương; ưu tiên đổi cube > fragile > mở cầu > thường."""
