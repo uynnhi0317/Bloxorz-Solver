@@ -1,0 +1,314 @@
+{
+  "name": "Stage 01 [Simple] - Straight Path",
+  "start": [
+    2,
+    2
+  ],
+  "initial_closed_bridges": [],
+  "tiles": [
+    [
+      {
+        "type": "void"
+      },
+      {
+        "type": "void"
+      },
+      {
+        "type": "void"
+      },
+      {
+        "type": "void"
+      },
+      {
+        "type": "void"
+      },
+      {
+        "type": "void"
+      },
+      {
+        "type": "void"
+      },
+      {
+        "type": "void"
+      },
+      {
+        "type": "void"
+      },
+      {
+        "type": "void"
+      },
+      {
+        "type": "void"
+      },
+      {
+        "type": "void"
+      }
+    ],
+    [
+      {
+        "type": "void"
+      },
+      {
+        "type": "floor"
+      },
+      {
+        "type": "floor"
+      },
+      {
+        "type": "floor"
+      },
+      {
+        "type": "void"
+      },
+      {
+        "type": "void"
+      },
+      {
+        "type": "void"
+      },
+      {
+        "type": "void"
+      },
+      {
+        "type": "void"
+      },
+      {
+        "type": "void"
+      },
+      {
+        "type": "void"
+      },
+      {
+        "type": "void"
+      }
+    ],
+    [
+      {
+        "type": "void"
+      },
+      {
+        "type": "floor"
+      },
+      {
+        "type": "floor"
+      },
+      {
+        "type": "floor"
+      },
+      {
+        "type": "floor"
+      },
+      {
+        "type": "floor"
+      },
+      {
+        "type": "floor"
+      },
+      {
+        "type": "void"
+      },
+      {
+        "type": "void"
+      },
+      {
+        "type": "void"
+      },
+      {
+        "type": "void"
+      },
+      {
+        "type": "void"
+      }
+    ],
+    [
+      {
+        "type": "void"
+      },
+      {
+        "type": "floor"
+      },
+      {
+        "type": "floor"
+      },
+      {
+        "type": "floor"
+      },
+      {
+        "type": "floor"
+      },
+      {
+        "type": "floor"
+      },
+      {
+        "type": "floor"
+      },
+      {
+        "type": "floor"
+      },
+      {
+        "type": "floor"
+      },
+      {
+        "type": "floor"
+      },
+      {
+        "type": "void"
+      },
+      {
+        "type": "void"
+      }
+    ],
+    [
+      {
+        "type": "void"
+      },
+      {
+        "type": "void"
+      },
+      {
+        "type": "floor"
+      },
+      {
+        "type": "floor"
+      },
+      {
+        "type": "floor"
+      },
+      {
+        "type": "floor"
+      },
+      {
+        "type": "floor"
+      },
+      {
+        "type": "floor"
+      },
+      {
+        "type": "floor"
+      },
+      {
+        "type": "floor"
+      },
+      {
+        "type": "floor"
+      },
+      {
+        "type": "void"
+      }
+    ],
+    [
+      {
+        "type": "void"
+      },
+      {
+        "type": "void"
+      },
+      {
+        "type": "void"
+      },
+      {
+        "type": "void"
+      },
+      {
+        "type": "void"
+      },
+      {
+        "type": "void"
+      },
+      {
+        "type": "floor"
+      },
+      {
+        "type": "floor"
+      },
+      {
+        "type": "goal"
+      },
+      {
+        "type": "floor"
+      },
+      {
+        "type": "floor"
+      },
+      {
+        "type": "void"
+      }
+    ],
+    [
+      {
+        "type": "void"
+      },
+      {
+        "type": "void"
+      },
+      {
+        "type": "void"
+      },
+      {
+        "type": "void"
+      },
+      {
+        "type": "void"
+      },
+      {
+        "type": "void"
+      },
+      {
+        "type": "void"
+      },
+      {
+        "type": "floor"
+      },
+      {
+        "type": "floor"
+      },
+      {
+        "type": "floor"
+      },
+      {
+        "type": "void"
+      },
+      {
+        "type": "void"
+      }
+    ],
+    [
+      {
+        "type": "void"
+      },
+      {
+        "type": "void"
+      },
+      {
+        "type": "void"
+      },
+      {
+        "type": "void"
+      },
+      {
+        "type": "void"
+      },
+      {
+        "type": "void"
+      },
+      {
+        "type": "void"
+      },
+      {
+        "type": "void"
+      },
+      {
+        "type": "void"
+      },
+      {
+        "type": "void"
+      },
+      {
+        "type": "void"
+      },
+      {
+        "type": "void"
+      }
+    ]
+  ]
+}
