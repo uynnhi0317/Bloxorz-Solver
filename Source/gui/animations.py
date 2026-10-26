@@ -169,8 +169,10 @@ class Sequence(Animation):
         if self.anims:
             self.anims[0].update(dt_ms)
             if self.anims[0].done:
-                self.anims.pop(0)
-        self.done = not self.anims
+                if len(self.anims) > 1:
+                    self.anims.pop(0)
+                else:
+                    self.done = True
 
     def draw(self, surface) -> None:
         if self.anims:
