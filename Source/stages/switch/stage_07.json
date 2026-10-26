@@ -1,0 +1,216 @@
+{
+  "name": "Stage 07 [Switch] - Soft Toggle Bridge",
+  "start": [
+    2,
+    2
+  ],
+  "initial_closed_bridges": [
+    "br_1",
+    "br_2"
+  ],
+  "tiles": [
+    [
+      {
+        "type": "void"
+      },
+      {
+        "type": "void"
+      },
+      {
+        "type": "void"
+      },
+      {
+        "type": "void"
+      },
+      {
+        "type": "void"
+      },
+      {
+        "type": "void"
+      },
+      {
+        "type": "void"
+      },
+      {
+        "type": "void"
+      },
+      {
+        "type": "void"
+      },
+      {
+        "type": "void"
+      },
+      {
+        "type": "void"
+      },
+      {
+        "type": "void"
+      }
+    ],
+    [
+      {
+        "type": "void"
+      },
+      {
+        "type": "floor"
+      },
+      {
+        "type": "floor"
+      },
+      {
+        "type": "floor"
+      },
+      {
+        "type": "floor"
+      },
+      {
+        "type": "void"
+      },
+      {
+        "type": "void"
+      },
+      {
+        "type": "floor"
+      },
+      {
+        "type": "floor"
+      },
+      {
+        "type": "floor"
+      },
+      {
+        "type": "floor"
+      },
+      {
+        "type": "void"
+      }
+    ],
+    [
+      {
+        "type": "void"
+      },
+      {
+        "type": "floor"
+      },
+      {
+        "type": "floor"
+      },
+      {
+        "type": "floor"
+      },
+      {
+        "type": "switch",
+        "id": "sw_soft_1",
+        "switch": "soft",
+        "targets": [
+          "br_1",
+          "br_2"
+        ],
+        "destinations": [],
+        "metadata": {},
+        "effect": "toggle"
+      },
+      {
+        "type": "bridge",
+        "id": "br_1",
+        "metadata": {}
+      },
+      {
+        "type": "bridge",
+        "id": "br_2",
+        "metadata": {}
+      },
+      {
+        "type": "floor"
+      },
+      {
+        "type": "goal"
+      },
+      {
+        "type": "floor"
+      },
+      {
+        "type": "floor"
+      },
+      {
+        "type": "void"
+      }
+    ],
+    [
+      {
+        "type": "void"
+      },
+      {
+        "type": "floor"
+      },
+      {
+        "type": "floor"
+      },
+      {
+        "type": "floor"
+      },
+      {
+        "type": "floor"
+      },
+      {
+        "type": "void"
+      },
+      {
+        "type": "void"
+      },
+      {
+        "type": "floor"
+      },
+      {
+        "type": "floor"
+      },
+      {
+        "type": "floor"
+      },
+      {
+        "type": "floor"
+      },
+      {
+        "type": "void"
+      }
+    ],
+    [
+      {
+        "type": "void"
+      },
+      {
+        "type": "void"
+      },
+      {
+        "type": "void"
+      },
+      {
+        "type": "void"
+      },
+      {
+        "type": "void"
+      },
+      {
+        "type": "void"
+      },
+      {
+        "type": "void"
+      },
+      {
+        "type": "void"
+      },
+      {
+        "type": "void"
+      },
+      {
+        "type": "void"
+      },
+      {
+        "type": "void"
+      },
+      {
+        "type": "void"
+      }
+    ]
+  ]
+}

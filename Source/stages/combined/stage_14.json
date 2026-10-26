@@ -1,0 +1,413 @@
+{
+  "name": "Stage 14 [Combined] - Split Switch over Fragile Corridor",
+  "start": [
+    2,
+    2
+  ],
+  "initial_closed_bridges": [
+    "br_c4"
+  ],
+  "tiles": [
+    [
+      {
+        "type": "void"
+      },
+      {
+        "type": "void"
+      },
+      {
+        "type": "void"
+      },
+      {
+        "type": "void"
+      },
+      {
+        "type": "void"
+      },
+      {
+        "type": "void"
+      },
+      {
+        "type": "void"
+      },
+      {
+        "type": "void"
+      },
+      {
+        "type": "void"
+      },
+      {
+        "type": "void"
+      },
+      {
+        "type": "void"
+      },
+      {
+        "type": "void"
+      },
+      {
+        "type": "void"
+      },
+      {
+        "type": "void"
+      },
+      {
+        "type": "void"
+      },
+      {
+        "type": "void"
+      },
+      {
+        "type": "void"
+      },
+      {
+        "type": "void"
+      },
+      {
+        "type": "void"
+      },
+      {
+        "type": "void"
+      }
+    ],
+    [
+      {
+        "type": "void"
+      },
+      {
+        "type": "floor"
+      },
+      {
+        "type": "floor"
+      },
+      {
+        "type": "floor"
+      },
+      {
+        "type": "floor"
+      },
+      {
+        "type": "void"
+      },
+      {
+        "type": "void"
+      },
+      {
+        "type": "void"
+      },
+      {
+        "type": "floor"
+      },
+      {
+        "type": "floor"
+      },
+      {
+        "type": "floor"
+      },
+      {
+        "type": "floor"
+      },
+      {
+        "type": "void"
+      },
+      {
+        "type": "void"
+      },
+      {
+        "type": "void"
+      },
+      {
+        "type": "floor"
+      },
+      {
+        "type": "floor"
+      },
+      {
+        "type": "floor"
+      },
+      {
+        "type": "floor"
+      },
+      {
+        "type": "void"
+      }
+    ],
+    [
+      {
+        "type": "void"
+      },
+      {
+        "type": "floor"
+      },
+      {
+        "type": "floor"
+      },
+      {
+        "type": "floor"
+      },
+      {
+        "type": "switch",
+        "id": "sw_split_c4",
+        "switch": "split",
+        "targets": [],
+        "destinations": [
+          [
+            1,
+            8
+          ],
+          [
+            4,
+            8
+          ]
+        ],
+        "metadata": {}
+      },
+      {
+        "type": "void"
+      },
+      {
+        "type": "void"
+      },
+      {
+        "type": "void"
+      },
+      {
+        "type": "floor"
+      },
+      {
+        "type": "fragile"
+      },
+      {
+        "type": "fragile"
+      },
+      {
+        "type": "floor"
+      },
+      {
+        "type": "void"
+      },
+      {
+        "type": "void"
+      },
+      {
+        "type": "void"
+      },
+      {
+        "type": "floor"
+      },
+      {
+        "type": "goal"
+      },
+      {
+        "type": "floor"
+      },
+      {
+        "type": "floor"
+      },
+      {
+        "type": "void"
+      }
+    ],
+    [
+      {
+        "type": "void"
+      },
+      {
+        "type": "floor"
+      },
+      {
+        "type": "floor"
+      },
+      {
+        "type": "floor"
+      },
+      {
+        "type": "floor"
+      },
+      {
+        "type": "void"
+      },
+      {
+        "type": "void"
+      },
+      {
+        "type": "void"
+      },
+      {
+        "type": "floor"
+      },
+      {
+        "type": "switch",
+        "id": "sw_soft_c4",
+        "switch": "soft",
+        "targets": [
+          "br_c4"
+        ],
+        "destinations": [],
+        "metadata": {},
+        "effect": "permanent",
+        "set_to": "open"
+      },
+      {
+        "type": "floor"
+      },
+      {
+        "type": "floor"
+      },
+      {
+        "type": "bridge",
+        "id": "br_c4",
+        "metadata": {}
+      },
+      {
+        "type": "bridge",
+        "id": "br_c4",
+        "metadata": {}
+      },
+      {
+        "type": "bridge",
+        "id": "br_c4",
+        "metadata": {}
+      },
+      {
+        "type": "floor"
+      },
+      {
+        "type": "floor"
+      },
+      {
+        "type": "floor"
+      },
+      {
+        "type": "floor"
+      },
+      {
+        "type": "void"
+      }
+    ],
+    [
+      {
+        "type": "void"
+      },
+      {
+        "type": "void"
+      },
+      {
+        "type": "void"
+      },
+      {
+        "type": "void"
+      },
+      {
+        "type": "void"
+      },
+      {
+        "type": "void"
+      },
+      {
+        "type": "void"
+      },
+      {
+        "type": "void"
+      },
+      {
+        "type": "floor"
+      },
+      {
+        "type": "floor"
+      },
+      {
+        "type": "floor"
+      },
+      {
+        "type": "floor"
+      },
+      {
+        "type": "void"
+      },
+      {
+        "type": "void"
+      },
+      {
+        "type": "void"
+      },
+      {
+        "type": "floor"
+      },
+      {
+        "type": "floor"
+      },
+      {
+        "type": "floor"
+      },
+      {
+        "type": "floor"
+      },
+      {
+        "type": "void"
+      }
+    ],
+    [
+      {
+        "type": "void"
+      },
+      {
+        "type": "void"
+      },
+      {
+        "type": "void"
+      },
+      {
+        "type": "void"
+      },
+      {
+        "type": "void"
+      },
+      {
+        "type": "void"
+      },
+      {
+        "type": "void"
+      },
+      {
+        "type": "void"
+      },
+      {
+        "type": "void"
+      },
+      {
+        "type": "void"
+      },
+      {
+        "type": "void"
+      },
+      {
+        "type": "void"
+      },
+      {
+        "type": "void"
+      },
+      {
+        "type": "void"
+      },
+      {
+        "type": "void"
+      },
+      {
+        "type": "void"
+      },
+      {
+        "type": "void"
+      },
+      {
+        "type": "void"
+      },
+      {
+        "type": "void"
+      },
+      {
+        "type": "void"
+      }
+    ]
+  ]
+}

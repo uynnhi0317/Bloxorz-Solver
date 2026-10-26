@@ -1,0 +1,432 @@
+{
+  "name": "Stage 09 [Switch] - Permanent Open & Trap Close",
+  "start": [
+    2,
+    2
+  ],
+  "initial_closed_bridges": [
+    "br_goal_1",
+    "br_goal_2"
+  ],
+  "tiles": [
+    [
+      {
+        "type": "void"
+      },
+      {
+        "type": "void"
+      },
+      {
+        "type": "void"
+      },
+      {
+        "type": "void"
+      },
+      {
+        "type": "void"
+      },
+      {
+        "type": "void"
+      },
+      {
+        "type": "void"
+      },
+      {
+        "type": "void"
+      },
+      {
+        "type": "void"
+      },
+      {
+        "type": "void"
+      },
+      {
+        "type": "void"
+      },
+      {
+        "type": "void"
+      },
+      {
+        "type": "void"
+      },
+      {
+        "type": "void"
+      }
+    ],
+    [
+      {
+        "type": "void"
+      },
+      {
+        "type": "floor"
+      },
+      {
+        "type": "floor"
+      },
+      {
+        "type": "floor"
+      },
+      {
+        "type": "floor"
+      },
+      {
+        "type": "switch",
+        "id": "sw_perm_close",
+        "switch": "soft",
+        "targets": [
+          "br_goal_1"
+        ],
+        "destinations": [],
+        "metadata": {},
+        "effect": "permanent",
+        "set_to": "close"
+      },
+      {
+        "type": "floor"
+      },
+      {
+        "type": "floor"
+      },
+      {
+        "type": "floor"
+      },
+      {
+        "type": "floor"
+      },
+      {
+        "type": "void"
+      },
+      {
+        "type": "void"
+      },
+      {
+        "type": "void"
+      },
+      {
+        "type": "void"
+      }
+    ],
+    [
+      {
+        "type": "void"
+      },
+      {
+        "type": "floor"
+      },
+      {
+        "type": "floor"
+      },
+      {
+        "type": "floor"
+      },
+      {
+        "type": "floor"
+      },
+      {
+        "type": "floor"
+      },
+      {
+        "type": "floor"
+      },
+      {
+        "type": "floor"
+      },
+      {
+        "type": "switch",
+        "id": "sw_perm_open",
+        "switch": "heavy",
+        "targets": [
+          "br_goal_1",
+          "br_goal_2"
+        ],
+        "destinations": [],
+        "metadata": {},
+        "effect": "permanent",
+        "set_to": "open"
+      },
+      {
+        "type": "floor"
+      },
+      {
+        "type": "floor"
+      },
+      {
+        "type": "void"
+      },
+      {
+        "type": "void"
+      },
+      {
+        "type": "void"
+      }
+    ],
+    [
+      {
+        "type": "void"
+      },
+      {
+        "type": "floor"
+      },
+      {
+        "type": "floor"
+      },
+      {
+        "type": "floor"
+      },
+      {
+        "type": "floor"
+      },
+      {
+        "type": "void"
+      },
+      {
+        "type": "void"
+      },
+      {
+        "type": "void"
+      },
+      {
+        "type": "floor"
+      },
+      {
+        "type": "floor"
+      },
+      {
+        "type": "void"
+      },
+      {
+        "type": "void"
+      },
+      {
+        "type": "void"
+      },
+      {
+        "type": "void"
+      }
+    ],
+    [
+      {
+        "type": "void"
+      },
+      {
+        "type": "void"
+      },
+      {
+        "type": "void"
+      },
+      {
+        "type": "void"
+      },
+      {
+        "type": "void"
+      },
+      {
+        "type": "void"
+      },
+      {
+        "type": "void"
+      },
+      {
+        "type": "void"
+      },
+      {
+        "type": "bridge",
+        "id": "br_goal_1",
+        "metadata": {}
+      },
+      {
+        "type": "bridge",
+        "id": "br_goal_2",
+        "metadata": {}
+      },
+      {
+        "type": "void"
+      },
+      {
+        "type": "void"
+      },
+      {
+        "type": "void"
+      },
+      {
+        "type": "void"
+      }
+    ],
+    [
+      {
+        "type": "void"
+      },
+      {
+        "type": "void"
+      },
+      {
+        "type": "void"
+      },
+      {
+        "type": "void"
+      },
+      {
+        "type": "void"
+      },
+      {
+        "type": "void"
+      },
+      {
+        "type": "void"
+      },
+      {
+        "type": "floor"
+      },
+      {
+        "type": "floor"
+      },
+      {
+        "type": "floor"
+      },
+      {
+        "type": "floor"
+      },
+      {
+        "type": "void"
+      },
+      {
+        "type": "void"
+      },
+      {
+        "type": "void"
+      }
+    ],
+    [
+      {
+        "type": "void"
+      },
+      {
+        "type": "void"
+      },
+      {
+        "type": "void"
+      },
+      {
+        "type": "void"
+      },
+      {
+        "type": "void"
+      },
+      {
+        "type": "void"
+      },
+      {
+        "type": "void"
+      },
+      {
+        "type": "floor"
+      },
+      {
+        "type": "goal"
+      },
+      {
+        "type": "floor"
+      },
+      {
+        "type": "floor"
+      },
+      {
+        "type": "void"
+      },
+      {
+        "type": "void"
+      },
+      {
+        "type": "void"
+      }
+    ],
+    [
+      {
+        "type": "void"
+      },
+      {
+        "type": "void"
+      },
+      {
+        "type": "void"
+      },
+      {
+        "type": "void"
+      },
+      {
+        "type": "void"
+      },
+      {
+        "type": "void"
+      },
+      {
+        "type": "void"
+      },
+      {
+        "type": "floor"
+      },
+      {
+        "type": "floor"
+      },
+      {
+        "type": "floor"
+      },
+      {
+        "type": "floor"
+      },
+      {
+        "type": "void"
+      },
+      {
+        "type": "void"
+      },
+      {
+        "type": "void"
+      }
+    ],
+    [
+      {
+        "type": "void"
+      },
+      {
+        "type": "void"
+      },
+      {
+        "type": "void"
+      },
+      {
+        "type": "void"
+      },
+      {
+        "type": "void"
+      },
+      {
+        "type": "void"
+      },
+      {
+        "type": "void"
+      },
+      {
+        "type": "void"
+      },
+      {
+        "type": "void"
+      },
+      {
+        "type": "void"
+      },
+      {
+        "type": "void"
+      },
+      {
+        "type": "void"
+      },
+      {
+        "type": "void"
+      },
+      {
+        "type": "void"
+      }
+    ]
+  ]
+}
