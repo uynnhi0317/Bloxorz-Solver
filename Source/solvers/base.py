@@ -47,7 +47,9 @@ class SolveResult:
             Độ dài lời giải (số bước di chuyển).
             Trả về 0 nếu không tìm được lời giải hoặc trạng thái đầu đã là đích.
         """
-        return len(self.moves) if self.moves is not None else 0
+        if self.moves is None:
+            return 0
+        return sum(1 for m in self.moves if m != Action.SWITCH_CONTROL)
 
 
 class BaseSolver(ABC):
