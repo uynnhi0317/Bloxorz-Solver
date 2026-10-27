@@ -4,7 +4,7 @@ Chạy từ thư mục Source/:
     python -m gui.assets.scripts.make_thumbnails                 # đúng danh sách + thứ tự stage mà app đang dùng
     python -m gui.assets.scripts.make_thumbnails a.json b.json   # hoặc chỉ định file (thứ tự = số thứ tự màn)
 
-Ảnh lưu ở gui/assets/thumbs/stage_01.png, stage_02.png, ... (khớp với "Stage x" trong app).
+Ảnh lưu ở gui/assets/thumbs/stage_01.png, stage_02.png, ...
 Thêm/đổi/đổi thứ tự stage thì chạy lại.
 """
 import os
