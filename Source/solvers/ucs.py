@@ -11,11 +11,12 @@ from solvers.base import BaseSolver, CameFrom
 NORMAL_COST = 2    # Lăn thông thường
 SWITCH_COST = 1    # Kích switch làm mở ít nhất một cầu
 FRAGILE_COST = 4   # Block đè lên ô fragile
-CONTROL_COST = 1   # Đổi điều khiển khi block tách
+CONTROL_COST = 0   # Đổi cube không phải cú lăn nên không tính chi phí
 MIN_ROLL_COST = min(NORMAL_COST, SWITCH_COST, FRAGILE_COST)
 
+
 def move_cost(board: Board, parent: State, action: Action, child: State) -> int:
-    """Chi phí một action, luôn dương; ưu tiên đổi cube > fragile > mở cầu > thường."""
+    """Chi phí một action, không âm; ưu tiên đổi cube > fragile > mở cầu > thường."""
     if action == Action.SWITCH_CONTROL:
         return CONTROL_COST
     # Cube đơn không làm vỡ fragile nên chỉ tính rủi ro cho block nguyên vẹn

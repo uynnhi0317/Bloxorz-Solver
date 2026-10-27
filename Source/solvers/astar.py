@@ -1,4 +1,5 @@
 import heapq
+import math
 from itertools import count
 from typing import Dict, Optional, Sequence, Tuple
 
@@ -31,24 +32,28 @@ class AStarSolver(BaseSolver):
         # Cùng f thì ưu tiên h nhỏ
         tie = count()
         h_start = h(start)
+        if h_start == math.inf:
+            return None, 0  # Không ô nào nối được tới goal
         frontier = [(h_start, h_start, next(tie), 0, start)]
         expanded = 0
 
         while frontier:
             _, _, _, cost, state = heapq.heappop(frontier)
             if cost > best_cost[state]:
-                continue 
+                continue  # Bản ghi cũ đã có đường rẻ hơn
 
             if is_goal(board, state):
                 return self.reconstruct_path(came_from, state), expanded
             expanded += 1
 
             for action, child in get_successors(board, state):
+                h_child = h(child)
+                if h_child == math.inf:
+                    continue  # State chết: h admissible nên h* cũng là vô cực
                 new_cost = cost + move_cost(board, state, action, child)
                 if child not in best_cost or new_cost < best_cost[child]:
                     best_cost[child] = new_cost
                     came_from[child] = (state, action)
-                    h_child = h(child)
                     heapq.heappush(frontier, (new_cost + h_child, h_child,
                                               next(tie), new_cost, child))
 

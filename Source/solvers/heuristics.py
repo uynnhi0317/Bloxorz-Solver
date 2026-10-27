@@ -14,8 +14,7 @@ Passable = Callable[[Coord], bool]
 
 
 def _distances_to_goal(board: Board, passable: Passable) -> Dict[Coord, int]:
-    """Số ô ít nhất từ mỗi ô tới goal trên lưới 4 hướng
-    """
+    """Số ô ít nhất từ mỗi ô tới goal trên lưới 4 hướng (0-1 BFS ngược)."""
     # teleport_sources[D]: danh sách các switch dịch chuyển tới D
     teleport_sources: Dict[Coord, List[Coord]] = {}
     for r, row in enumerate(board.tiles):
@@ -45,7 +44,7 @@ def _distances_to_goal(board: Board, passable: Passable) -> Dict[Coord, int]:
 def _make_heuristic(
     board: Board, passable: Passable, orientation_penalty: bool
 ) -> Heuristic:
-    """h =MIN_ROLL_COST  * ceil((khoảng cách ô gần goal nhất + phạt) / 2)."""
+    """h = MIN_ROLL_COST * ceil((khoảng cách ô gần goal nhất + phạt) / 2)."""
     dist = _distances_to_goal(board, passable)
 
     def heuristic(state: State) -> float:
@@ -55,7 +54,7 @@ def _make_heuristic(
         not_standing = (state.split_positions is not None
                         or state.orientation != Orientation.STANDING)
         penalty = int(orientation_penalty and not_standing)
-        # Mỗi action kéo ô gần goal nhất lại gần thêm tối đa 2 ô
+        # Mỗi cú lăn kéo ô gần goal nhất lại gần thêm tối đa 2 ô
         return MIN_ROLL_COST * math.ceil((min(reachable) + penalty) / 2)
 
     return heuristic
