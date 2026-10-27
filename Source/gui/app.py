@@ -1,4 +1,9 @@
 """app.py - Vòng lặp chính: menu game, chọn màn, credits, chơi màn (HUD, pause, thắng/thua).
+
+Cách T14 gắn solver vào:
+    app.register_solver("BFS", fn)   # fn(board, state) -> Optional[List[Action]]
+Nút Solve tương ứng tự bật; kết quả được replay bằng animation. Số liệu (time, memory...)
+do T14 tự hiển thị / lưu.
 """
 from __future__ import annotations
 
@@ -22,13 +27,15 @@ PAGE_COLS, PAGE_ROWS = 4, 2
 PAGE_SIZE = PAGE_COLS * PAGE_ROWS
 HUD_H = 56
 
-# TODO: thay bằng tên + vai trò thật của các thành viên
-CREDITS: List[Tuple[str, str]] = [
-    ("Thành viên 1", "Game logic: State, Tile, Board"),
-    ("Thành viên 2", "Game logic: luật chơi, split/merge"),
-    ("Thành viên 3", "Solvers: BFS, DFS"),
-    ("Thành viên 4", "Solvers: UCS, A*"),
-    ("Thành viên 5", "GUI: renderer, app, benchmark"),
+CREDITS: List[Tuple[str, Tuple[str, str]]] = [
+    ("Trần Tuấn Kiệt", ("Lead Systems Programmer · Core Architecture & Stage",
+                      "Gameplay Programmer · Data Visualization")),
+    ("Trần Ngô Uyên Nhi", ("Gameplay Programmer · Tile, Bridge & Switch Systems",
+                      "Level Designer · Performance & QA Engineer")),
+    ("Dương Ngọc Minh Thư", ("AI Programmer · Pathfinding & Search",
+                      "Gameplay QA · Heuristic & Cost Design")),
+    ("Hoàng Diễm Phương", ("Graphics Programmer · Rendering & Animation",
+                      "UI Programmer · Tools & Benchmark Engineer")),
 ]
 
 Solver = Callable[[Board, State], Optional[List[Action]]]
@@ -129,7 +136,9 @@ class App:
     def __init__(self) -> None:
         pygame.init()
         pygame.display.set_caption("Bloxorz Solver")
-        self.screen = pygame.display.set_mode((960, 640), pygame.RESIZABLE)
+        info = pygame.display.Info()
+        width, height = info.current_w, info.current_h
+        self.screen = pygame.display.set_mode((width, height), pygame.FULLSCREEN)
         self.clock = pygame.time.Clock()
         self.running = True
         self.stages = discover_stages()
@@ -200,6 +209,7 @@ class App:
 
     # ------------------------------------------------------------------ event
     def handle_event(self, e: pygame.event.Event) -> None:
+        """Chọn handle event phù hợp với từng scene"""
         if e.type == pygame.QUIT:
             self.running = False
         elif self.scene == "menu":
@@ -214,6 +224,7 @@ class App:
             self._event_play(e)
 
     def _event_menu(self, e) -> None:
+        """Handle event khi ở menu chính"""
         choice = self.main_menu.handle(e)
         if choice == "New Game":
             if self.stages:
@@ -228,6 +239,7 @@ class App:
             self.running = False
 
     def _event_select(self, e) -> None:
+        """Handle event khi ở menu Load Stage"""
         n = len(self.stages)
         rects = self._select_rects()
         left, right = self._arrow_rects()
@@ -256,6 +268,7 @@ class App:
                         self.start_stage(page * PAGE_SIZE + slot)
 
     def _event_play(self, e) -> None:
+        """Handle event khi đang chơi"""
         s = self.session
         if self.paused:
             choice = self.pause_menu.handle(e)
@@ -292,16 +305,18 @@ class App:
 
     # ------------------------------------------------------------------ update
     def update(self, dt: float) -> None:
-        if self.screen.get_size() != self._size:  # cửa sổ đổi kích thước
+        # cửa sổ đổi kích thước, về sau tuy game đã chỉnh thành FULLSCREEN nhưng vẫn để code ở đây phòng khi đổi ý
+        if self.screen.get_size() != self._size:
             self._size = self.screen.get_size()
             self.background.resize(self._size)
             if self.session:
                 self.session.renderer.set_area(self.board_area())
         self.toast_ms = max(0.0, self.toast_ms - dt)
         self.background.update(dt)
+
         if self.scene == "credits":
-            self.credits_y -= 45 * dt / 1000
-            if self.credits_y < -(len(CREDITS) * 70 + 260):
+            self.credits_y -= dt / 10
+            if self.credits_y < -(len(CREDITS) * 260 + 210):
                 self.credits_y = float(self.screen.get_height())
         if self.scene != "play" or self.paused:
             return
@@ -317,15 +332,16 @@ class App:
 
     # ------------------------------------------------------------------ draw
     def draw(self) -> None:
+        """Chọn cảnh để vẽ"""
         surf = self.screen
         self.background.draw(surf)
         w, h = surf.get_size()
         if self.scene == "menu":
-            draw_divider(surf, w // 2, h // 2 - 262, 520)
-            draw_title(surf, "Bloxorz", 92, center=(w // 2, h // 2 - 190))
-            draw_title(surf, "Solver", 40, color=COLORS["accent"], center=(w // 2, h // 2 - 120))
-            draw_divider(surf, w // 2, h // 2 - 70, 420, flip=True)
-            self.main_menu.draw(surf, w // 2, h // 2 - 10)  # thấp hơn một dòng so với trước (-70)
+            draw_divider(surf, w // 2, h // 2 - 300, 720)
+            draw_title(surf, "Bloxorz", 140, center=(w // 2, h // 2 - 190))
+            draw_title(surf, "Solver", 85, color=COLORS["accent"], center=(w // 2, h // 2 - 80))
+            draw_divider(surf, w // 2, h // 2 - 10, 620, flip=True)
+            self.main_menu.draw(surf, w // 2, h // 2 + 40)  # thấp hơn một dòng so với trước (-70)
         elif self.scene == "select":
             self._draw_select(surf)
         elif self.scene == "credits":
@@ -347,9 +363,8 @@ class App:
             draw_text(surf, self.toast_text, 20, COLORS["text"], center=r.center)
 
     def _draw_hud(self, surf: pygame.Surface) -> None:
+        """HUD trong game"""
         w = surf.get_width()
-        pygame.draw.rect(surf, COLORS["bar"], (0, 0, w, HUD_H))
-        pygame.draw.line(surf, COLORS["border"], (0, HUD_H), (w, HUD_H))
         self.btn_pause.rect = pygame.Rect(12, 10, 36, 36)
         x = w - 12
         for b in reversed(self.hud_buttons):
@@ -364,6 +379,7 @@ class App:
         draw_text(surf, f"Moves: {s.moves}", 20, COLORS["muted"], midleft=(r.right + 24, HUD_H // 2))
 
     def _draw_overlay(self, surf, title, color, subtitle, menu: Menu) -> None:
+        """Overlay như Paused, Win, Lose"""
         w, h = surf.get_size()
         dim = pygame.Surface((w, h), pygame.SRCALPHA)
         dim.fill((10, 12, 18, 175))
@@ -373,31 +389,37 @@ class App:
         draw_title(surf, title, 56, color=color, glow_color=glow, center=(w // 2, h // 2 - 130))
         if subtitle:
             draw_caps(surf, subtitle, 22, COLORS["muted"], center=(w // 2, h // 2 - 78))
-        draw_divider(surf, w // 2, h // 2 - 46, 340, flip=True)
         menu.draw(surf, w // 2, h // 2 - 20)
 
     def _draw_credits(self, surf: pygame.Surface) -> None:
+        """Vẽ credits"""
         w, h = surf.get_size()
         y = self.credits_y
-        draw_text(surf, "Bloxorz Solver", 48, COLORS["accent"], bold=True, midtop=(w // 2, y))
-        draw_text(surf, "CSC14003 - Introduction to Artificial Intelligence", 20, COLORS["muted"],
-                  midtop=(w // 2, y + 64))
-        y += 150
-        for name, role in CREDITS:
-            draw_text(surf, name, 28, COLORS["text"], bold=True, midtop=(w // 2, y))
-            draw_text(surf, role, 20, COLORS["muted"], midtop=(w // 2, y + 36))
-            y += 70
+        draw_divider(surf, w // 2, y, 600)
+        draw_text(surf, "Bloxorz Solver", 60, COLORS["accent"], bold=True, midtop=(w // 2, y + 40))
+        draw_text(surf, "CSC14003 - Introduction to Artificial Intelligence", 35, COLORS["muted"],
+                  midtop=(w // 2, y + 104))
+        draw_divider(surf, w // 2, y + 180, 350, flip=True)
+
+        y += 240
+        for name, (line1, line2) in CREDITS:
+            draw_text(surf, name, 40, COLORS["text"], bold=True, midtop=(w // 2, y))
+            draw_text(surf, line1, 25, COLORS["muted"], midtop=(w // 2, y + 70))
+            draw_text(surf, line2, 25, COLORS["muted"], midtop=(w // 2, y + 130))
+            y += 260
         draw_text(surf, "Esc: back", 18, COLORS["muted"], bottomright=(w - 16, h - 12))
 
-    # --- chọn màn
+    # --- chọn màn / Load Stage
     def _select_rects(self) -> List[pygame.Rect]:
+        """Tạo bộ khung chữ nhật cho các slot trong menu Load Stage"""
         w, h = self.screen.get_size()
-        mx, top, bottom, gap = 90, 110, h - 70, 20
+        mx, top, bottom, gap = 90, 150, h - 110, 20
         cw, ch = (w - 2 * mx - (PAGE_COLS - 1) * gap) / PAGE_COLS, (bottom - top - (PAGE_ROWS - 1) * gap) / PAGE_ROWS
         return [pygame.Rect(mx + (i % PAGE_COLS) * (cw + gap), top + (i // PAGE_COLS) * (ch + gap), cw, ch)
                 for i in range(PAGE_SIZE)]
 
     def _arrow_rects(self) -> Tuple[pygame.Rect, pygame.Rect]:
+        """Tạo bộ mũi tên trong menu Load Stage"""
         w, h = self.screen.get_size()
         mid = (110 + h - 70) // 2
         return pygame.Rect(18, mid - 40, 54, 80), pygame.Rect(w - 72, mid - 40, 54, 80)
@@ -409,40 +431,55 @@ class App:
             path, img = SOURCE_DIR / "gui" / "assets" / "thumbs" / f"stage_{idx + 1:02d}.png", None
             if path.is_file():
                 try:
-                    img = pygame.transform.smoothscale(pygame.image.load(str(path)).convert(), size)
+                    img = pygame.image.load(str(path)).convert()
+                    k = min(size[0] / img.get_width(), size[1] / img.get_height())  # giữ tỉ lệ, không méo ảnh
+                    img = pygame.transform.smoothscale(img, (max(1, int(img.get_width() * k)),
+                                                             max(1, int(img.get_height() * k))))
                 except pygame.error:
                     img = None
             self._thumbs[key] = img
         return self._thumbs[key]
 
     def _draw_select(self, surf: pygame.Surface) -> None:
+        """Vẽ menu Load Stage"""
         w, h = surf.get_size()
         n = len(self.stages)
         page, pages = self.select_index // PAGE_SIZE, max(1, math.ceil(n / PAGE_SIZE))
-        draw_text(surf, "Select Stage", 40, COLORS["text"], bold=True, center=(w // 2, 56))
+        draw_text(surf, "Select Stage", 30, COLORS["text"], bold=True, center=(w // 2, 56))
+        draw_divider(surf, w // 2, h // 2 - 400, 340, flip=True)
+
+        # tỉ lệ thật của ảnh thumbnail (các ảnh này lưu trong Source/gui/assets/thumb)
+        THUMB_WID, THUMB_HEI = 400, 300            
+
+        # các slot hiện stage
         for slot, r in enumerate(self._select_rects()):
             idx = page * PAGE_SIZE + slot
+            # card bám sát thumbnail
+            card = pygame.Rect(0, 0, max(THUMB_WID + 12, 110), THUMB_HEI + 12)
+            card.center = r.center
+
             if idx >= n:  # ô trống giữ nguyên bố cục 2x4
-                pygame.draw.rect(surf, (34, 37, 48), r, 1, border_radius=10)
+                pygame.draw.rect(surf, (34, 37, 48), card, 1, border_radius=10)
                 continue
             sel = idx == self.select_index
-            pygame.draw.rect(surf, COLORS["accent_dark"] if sel else COLORS["panel"], r, border_radius=10)
-            thumb = self._thumb(idx, (max(1, r.w - 12), max(1, r.h - 52)))
+            thumb = self._thumb(idx, (max(1, r.w - 12), max(1, r.h - 12)))
             if thumb:
-                surf.blit(thumb, (r.x + 6, r.y + 6))
-                draw_text(surf, f"Stage {idx + 1}", 22, COLORS["accent"] if sel else COLORS["muted"],
-                          bold=sel, midbottom=(r.centerx, r.bottom - 10))
+                surf.blit(thumb, thumb.get_rect(midtop=(card.centerx, card.y + 3)))
+                draw_text(surf, f"Stage {idx + 1}", 30, COLORS["accent"] if sel else COLORS["muted"],
+                          bold=sel, midbottom=(card.centerx, card.bottom + 60))
             else:
-                draw_text(surf, f"Stage {idx + 1}", 26, COLORS["accent"] if sel else COLORS["muted"],
-                          bold=sel, center=r.center)
-            pygame.draw.rect(surf, COLORS["accent"] if sel else COLORS["border"], r, 2, border_radius=10)
+                draw_text(surf, f"Stage {idx + 1}", 30, COLORS["accent"] if sel else COLORS["muted"],
+                          bold=sel, center=card.center)
+            pygame.draw.rect(surf, COLORS["text"] if sel else COLORS["border"], card, 2, border_radius=10)
+
+        # mũi tên chuyển page, text hướng dẫn manuver trong menu
         for rect, glyph, ok in zip(self._arrow_rects(), ("left", "right"), (page > 0, page < pages - 1)):
             col = COLORS["accent"] if ok else (50, 54, 68)
             cx, cy, d = rect.centerx, rect.centery, 1 if glyph == "right" else -1
             pygame.draw.lines(surf, col, False, [(cx - 12 * d, cy - 26), (cx + 12 * d, cy), (cx - 12 * d, cy + 26)], 6)
-        draw_text(surf, f"Page {page + 1}/{pages}", 20, COLORS["muted"], midbottom=(w // 2, h - 40))
-        draw_text(surf, "Arrow keys: move   Enter: play   Esc: back", 16, COLORS["muted"],
-                  midbottom=(w // 2, h - 14))
+        draw_text(surf, f"Page {page + 1}/{pages}", 25, COLORS["muted"], midbottom=(w // 2, h - 35))
+        draw_text(surf, "Arrow keys: move   Enter: play   Esc: back", 20, COLORS["muted"],
+                  midbottom=(w // 2, h - 8))
 
     # ------------------------------------------------------------------ main loop
     def run(self) -> None:

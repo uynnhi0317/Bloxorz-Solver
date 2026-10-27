@@ -189,7 +189,7 @@ class Menu:
     """Menu dọc: điều khiển bằng chuột (hover/click) hoặc phím (lên/xuống + Enter/Space).
     handle() trả về nhãn của mục được chọn, hoặc None."""
 
-    def __init__(self, items: List[str], size: int = 30, width: int = 300, gap: int = 12):
+    def __init__(self, items: List[str], size: int = 35, width: int = 300, gap: int = 15):
         self.size, self.width, self.gap = size, width, gap
         self.set_items(items)
 
@@ -197,7 +197,7 @@ class Menu:
         self.items, self.selected, self.rects = list(items), 0, []
 
     def draw(self, surface: pygame.Surface, center_x: int, top: int) -> None:
-        """Kiểu Hollow Knight: không khung, chữ small caps; mục đang chọn sáng + mũi tên hai bên."""
+        """Không khung, chữ small caps; mục đang chọn sáng + mũi tên hai bên."""
         self.rects = []
         h = self.size + 18
         for i, label in enumerate(self.items):
