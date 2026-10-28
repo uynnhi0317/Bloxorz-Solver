@@ -7,7 +7,7 @@ from typing import Dict, List, Optional, Sequence as Seq, Tuple
 
 import numpy as np
 
-from game import Action, Coord, State, SwitchKind, TileType
+from game import Action, Coord, Move, State, SwitchKind, TileType
 from .renderer import PALETTE, Box, Renderer, TileFx, make_box, rotate
 
 # action -> (axis, sign); axis 0 = row, 1 = col
@@ -296,21 +296,21 @@ class BridgeFlips:
 
 
 # --------------------------------------------------------------- factories
-def _moving_index(before: State) -> int:
+def _moving_index(before: State, cube: Optional[Coord] = None) -> int:
     """Index (trong before.split_positions) của cube đang được điều khiển.
     Nếu chưa tách --> chỉ có một khối, trả về 0."""
-    if before.split_positions is None:
+    if before.split_positions is None or cube is None:
         return 0
-    return before.split_positions.index(before.selected_cube)
+    return before.split_positions.index(cube)
 
 
-def is_bump(before: State, action: Action) -> bool:
+def is_bump(before: State, move: Move) -> bool:
     """Cube đang điều khiển đi thẳng vào ô của cube còn lại: nước đi bị chặn (get_next_state
     trả None) nhưng KHÔNG phải thua --> caller nên bỏ qua, không gọi animate_fall."""
-    if before.split_positions is None or action not in DIR_DELTA:
+    if before.split_positions is None or move.cube is None or move.action not in DIR_DELTA:
         return False
-    dr, dc = DIR_DELTA[action]
-    r, c = before.selected_cube
+    dr, dc = DIR_DELTA[move.action]
+    r, c = move.cube
     return (r + dr, c + dc) in before.split_positions
 
 
@@ -325,17 +325,17 @@ def _split_origin(renderer: Renderer, landed: np.ndarray) -> Tuple[int, int]:
     return cells[0]
 
 
-def animate_move(renderer: Renderer, before: State, action: Action, after: State,
+def animate_move(renderer: Renderer, before: State, move: Move, after: State,
                  duration_ms: float = 160) -> Animation:
-    """Animation của nước đi hợp lệ (action phải là MOVE_*).
+    """Animation của nước đi hợp lệ (move.action phải là MOVE_*).
     Thứ tự: lăn -> (tách cube nếu dẫm split switch). Cầu đổi trạng thái do BridgeFlips lo (chạy nền)."""
-    roll = RollAnimation(renderer, before, action,
-                         moving=_moving_index(before), duration_ms=duration_ms)
+    roll = RollAnimation(renderer, before, move.action,
+                         moving=_moving_index(before, move.cube), duration_ms=duration_ms)
     parts: List[Animation] = [roll]
     if after.split_positions is not None and before.split_positions is None:
         origin = _split_origin(renderer, roll.final_boxes[0].verts)
         parts.append(SpawnAnimation(renderer, before.bridge_mask, origin,
-                                    after.split_positions, after.selected_cube))
+                                    after.split_positions, after.split_positions[0])) # cube đầu - mặc định chọn sau khi tách
     return parts[0] if len(parts) == 1 else Sequence(*parts)
 
 

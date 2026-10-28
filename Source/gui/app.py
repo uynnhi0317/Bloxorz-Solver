@@ -1,7 +1,7 @@
 """app.py - Vòng lặp chính: menu game, chọn màn, credits, chơi màn (HUD, pause, thắng/thua).
 
 Cách T14 gắn solver vào:
-    app.register_solver("BFS", fn)   # fn(board, state) -> Optional[List[Action]]
+    app.register_solver("BFS", fn)   # fn(board, state) -> Optional[List[Move]]
 Nút Solve tương ứng tự bật; kết quả được replay bằng animation. Số liệu (time, memory...)
 do T14 tự hiển thị / lưu.
 """
@@ -14,9 +14,9 @@ from typing import Callable, Deque, Dict, List, Optional, Tuple
 
 import pygame
 
-from game import Action, Board, State, get_next_state, is_goal, load_stage
+from game import Board, Move, State, Action, get_next_state, is_goal, load_stage
 from .animations import (Animation, BridgeFlips, Sequence as AnimSequence, animate_fall, animate_intro, animate_move,
-                         animate_outro, animate_win, is_bump)
+                         animate_outro, animate_win, is_bump, DIR_DELTA)
 from .controls import COLORS, KEY_ACTIONS, Button, Menu, draw_caps, draw_divider, draw_text, draw_title
 from .theme import Background
 from .renderer import Renderer
@@ -38,7 +38,7 @@ CREDITS: List[Tuple[str, Tuple[str, str]]] = [
                       "UI Programmer · Tools & Benchmark Engineer")),
 ]
 
-Solver = Callable[[Board, State], Optional[List[Action]]]
+Solver = Callable[[Board, State], Optional[List[Move]]]
 
 
 def discover_stages(root: Path = SOURCE_DIR) -> List[Path]:
@@ -64,11 +64,13 @@ class PlaySession:
 
     def reset(self) -> None:
         self.state: State = self.board.initial_state
+        self.selected: Optional[Tuple[int, int]] = None  # cube đang điều khiển khi block tách
+        self.renderer.selected = None
         self.moves = 0
         self.status = "playing"  # playing | won | lost
         self.anim: Optional[Animation] = None
         self.pending: Optional[Tuple[State, str]] = None
-        self.replay: Deque[Action] = deque()
+        self.replay: Deque[Move] = deque()
         self.end_fx = None  # hiệu ứng tile còn lại sau animation cuối (vd tile fragile đã vỡ)
         self.flips.clear()
         self.renderer.prepare(self.state.bridge_mask)  # dựng sẵn ảnh sàn khử răng cưa
@@ -77,33 +79,56 @@ class PlaySession:
         """Vào màn / restart: tile bay lên, khối rơi xuống; input bị khóa tới khi xong."""
         self.anim, self.pending = animate_intro(self.renderer, self.state), (self.state, "playing")
 
-    def try_action(self, action: Action) -> bool:
+    def toggle_cube(self) -> None:
+        """Đổi cube đang điều khiển (phím Space). Chỉ đổi trạng thái UI, không tính bước."""
+        if self.anim is not None or self.status != "playing" or self.state.split_positions is None:
+            return
+        a, b = self.state.split_positions
+        self.selected = b if self.selected == a else a
+        self.renderer.selected = self.selected
+
+    def _follow_selection(self, move: Move, nxt: State) -> None:
+        """Cập nhật cube đang chọn sau một nước đi hợp lệ"""
+        if nxt.split_positions is None:  # đã ghép lại
+            self.selected = None
+        elif self.state.split_positions is None:  # vừa tách: mặc định chọn cube đầu
+            self.selected = nxt.split_positions[0]
+        else:  # cube đang chọn đi theo vị trí mới
+            dr, dc = DIR_DELTA[move.action]
+            if move.cube is not None:
+                self.selected = (move.cube[0] + dr, move.cube[1] + dc)
+        self.renderer.selected = self.selected
+
+    def try_action(self, act: Action | Move) -> bool:
         """Thực hiện một hành động; trả về False nếu bị bỏ qua (đang animation, đã kết thúc, bị chặn)."""
         if self.anim is not None or self.status != "playing":
             return False
-        nxt = get_next_state(self.board, self.state, action)
-        if action == Action.SWITCH_CONTROL:  # chỉ đổi cube active, không tính bước
-            if nxt is None:
-                return False
-            self.state = nxt
-            return True
+        split = self.state.split_positions is not None
+        if split and self.selected not in self.state.split_positions: # luôn có một cube được chọn
+            self.selected = self.renderer.selected = self.state.split_positions[0]
+        move = act if isinstance(act, Move) else Move(act, self.selected if split else None)
+        if split and move.cube is not None:  # replay: tự đổi cube theo lời giải
+            self.selected = self.renderer.selected = move.cube
+        nxt = get_next_state(self.board, self.state, move)
         if nxt is None:
-            if is_bump(self.state, action):  # cube đâm vào cube kia: bị chặn, không phải thua
+            if is_bump(self.state, move):  # cube đâm vào cube kia: bị chặn, không phải thua
                 return False
-            self.anim = animate_fall(self.renderer, self.state, action)
+            moving = self.state.split_positions.index(move.cube) if split and move.cube is not None else None
+            self.anim = animate_fall(self.renderer, self.state, move.action, moving=moving)
             self.pending = (self.state, "lost")
             return True
         self.moves += 1
-        move = animate_move(self.renderer, self.state, action, nxt)
+        move_anim = animate_move(self.renderer, self.state, move, nxt)
+        self._follow_selection(move, nxt)
         if is_goal(self.board, nxt):
-            self.anim = AnimSequence(move, animate_win(self.renderer, nxt), animate_outro(self.renderer, nxt))
+            self.anim = AnimSequence(move_anim, animate_win(self.renderer, nxt), animate_outro(self.renderer, nxt))
             self.pending = (nxt, "won")
         else:
-            self.anim, self.pending = move, (nxt, "playing")
+            self.anim, self.pending = move_anim, (nxt, "playing")
         return True
 
-    def start_replay(self, actions: List[Action]) -> None:
-        self.replay = deque(actions)
+    def start_replay(self, moves: List[Move]) -> None:
+        self.replay = deque(moves)
 
     def update(self, dt_ms: float) -> None:
         self.flips.update(dt_ms)
@@ -291,6 +316,8 @@ class App:
                 self.paused = True
             elif e.key == pygame.K_r:
                 self.restart()
+            elif e.key == pygame.K_SPACE and not s.replay:  # đổi cube đang điều khiển
+                s.toggle_cube()
             elif e.key in KEY_ACTIONS and not s.replay:  # đang replay lời giải thì khóa input
                 s.try_action(KEY_ACTIONS[e.key])
         elif e.type == pygame.MOUSEBUTTONDOWN and e.button == 1:
