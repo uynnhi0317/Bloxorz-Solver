@@ -137,8 +137,11 @@ class App:
         pygame.init()
         pygame.display.set_caption("Bloxorz Solver")
         info = pygame.display.Info()
-        width, height = info.current_w, info.current_h
-        self.screen = pygame.display.set_mode((width, height), pygame.FULLSCREEN)
+
+        # Set rescale = 1 to make fullscreen (instead of pygame.FULLSCREEN, since it might cause lag (?) ), the default is 0.8
+        width, height, rescale = info.current_w, info.current_h, 0.8
+        self.screen = pygame.display.set_mode((width*rescale, height*rescale), pygame.RESIZABLE)
+
         self.clock = pygame.time.Clock()
         self.running = True
         self.stages = discover_stages()
@@ -445,32 +448,39 @@ class App:
         w, h = surf.get_size()
         n = len(self.stages)
         page, pages = self.select_index // PAGE_SIZE, max(1, math.ceil(n / PAGE_SIZE))
-        draw_text(surf, "Select Stage", 30, COLORS["text"], bold=True, center=(w // 2, 56))
-        draw_divider(surf, w // 2, h // 2 - 400, 340, flip=True)
-
-        # tỉ lệ thật của ảnh thumbnail (các ảnh này lưu trong Source/gui/assets/thumb)
-        THUMB_WID, THUMB_HEI = 400, 300            
+        draw_text(surf, "Select Stage", 40, COLORS["text"], bold=True, center=(w // 2, 80))
+        draw_divider(surf, w // 2, 120, 340, flip=True)
 
         # các slot hiện stage
-        for slot, r in enumerate(self._select_rects()):
-            idx = page * PAGE_SIZE + slot
-            # card bám sát thumbnail
-            card = pygame.Rect(0, 0, max(THUMB_WID + 12, 110), THUMB_HEI + 12)
-            card.center = r.center
+        rects = self._select_rects()
+        # Kích thước card chuẩn: lấy từ thumbnail đầu tiên có trên trang này
+        ref = None
+        for i in range(page * PAGE_SIZE, min(n, (page + 1) * PAGE_SIZE)):
+            t = self._thumb(i, (max(1, rects[0].w - 12), max(1, rects[0].h - 12)))
+            if t:
+                ref = (max(t.get_width() + 12, 110), t.get_height() + 12)
+                break
 
-            if idx >= n:  # ô trống giữ nguyên bố cục 2x4
-                pygame.draw.rect(surf, (34, 37, 48), card, 1, border_radius=10)
+        for slot, r in enumerate(rects):
+            idx = page * PAGE_SIZE + slot
+            if idx >= n:  # ô trống: cùng kích thước với card thật
+                empty = pygame.Rect(0, 0, *ref) if ref else r.copy()
+                empty.center = r.center
+                pygame.draw.rect(surf, (34, 37, 48), empty, 1, border_radius=10)
                 continue
             sel = idx == self.select_index
             thumb = self._thumb(idx, (max(1, r.w - 12), max(1, r.h - 12)))
             if thumb:
+                card = pygame.Rect(0, 0, max(thumb.get_width() + 6, 110), thumb.get_height() + 6)
+                card.center = r.center
                 surf.blit(thumb, thumb.get_rect(midtop=(card.centerx, card.y + 3)))
-                draw_text(surf, f"Stage {idx + 1}", 30, COLORS["accent"] if sel else COLORS["muted"],
-                          bold=sel, midbottom=(card.centerx, card.bottom + 60))
+                draw_text(surf, f"Stage {idx + 1}", 28, COLORS["accent"] if sel else COLORS["muted"],
+                          bold=sel, midbottom=(card.centerx, card.bottom + 50))
             else:
-                draw_text(surf, f"Stage {idx + 1}", 30, COLORS["accent"] if sel else COLORS["muted"],
+                card = r
+                draw_text(surf, f"Stage {idx + 1}", 26, COLORS["accent"] if sel else COLORS["muted"],
                           bold=sel, center=card.center)
-            pygame.draw.rect(surf, COLORS["text"] if sel else COLORS["border"], card, 2, border_radius=10)
+            pygame.draw.rect(surf, COLORS["accent"] if sel else COLORS["border"], card, 2, border_radius=10)
 
         # mũi tên chuyển page, text hướng dẫn manuver trong menu
         for rect, glyph, ok in zip(self._arrow_rects(), ("left", "right"), (page > 0, page < pages - 1)):
