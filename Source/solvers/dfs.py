@@ -7,17 +7,17 @@ from solvers.base import BaseSolver
 class DFSSolver(BaseSolver):
     name = "DFS"
 
-    def _search(self, board: Board) -> Tuple[Optional[Sequence[Action]], int]:
+    def _search(self, board: Board) -> Tuple[Optional[Sequence[Move]], int]:
         start = board.initial_state
         visited: Set[State] = set()
-        moves: List[Action] = []
+        moves: List[Move] = []
 
         found, expanded = self.visit(board, start, visited, moves)
         if found:
             return tuple(moves), expanded
         return None, expanded
 
-    def visit(self, board: Board, state: State, visited: Set[State], moves: List[Action],) -> Tuple[bool, int]:
+    def visit(self, board: Board, state: State, visited: Set[State], moves: List[Move],) -> Tuple[bool, int]:
         """
         Tìm kiếm theo chiều sâu DFS từ một trạng thái
 
@@ -39,11 +39,11 @@ class DFSSolver(BaseSolver):
         expanded = 1
 
         # Duyệt qua các successor để đệ quy
-        for action, next_state in get_successors(board, state):
+        for move, next_state in get_successors(board, state):
             if next_state in visited:
                 continue
 
-            moves.append(action)
+            moves.append(move)
             found, child_expanded = self.visit(board, next_state, visited, moves)
             expanded += child_expanded
 

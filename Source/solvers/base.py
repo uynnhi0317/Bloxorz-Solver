@@ -5,21 +5,21 @@ import time
 import tracemalloc
 from typing import Dict, Optional, Sequence, Tuple
 from game.board import Board
-from game.rules import Action, get_next_state, is_goal
+from game.rules import Move, as_move, get_next_state, is_goal
 from game.state import State
 
-CameFrom = Dict[State, Tuple[Optional[State], Optional[Action]]]
+CameFrom = Dict[State, Tuple[Optional[State], Optional[Move]]]
 
 @dataclass(frozen = True, slots = True)
 class SolveResult:
     """
         Lưu trữ kết quả giải và các chỉ số hiệu năng của thuật toán:
-        + moves: chuỗi hướng di chuyển từ start đến goal (None nếu không tìm ra lời giải)
+        + moves: chuỗi nước đi từ start đến goal (None nếu không tìm ra lời giải)
         + time: thời gian thực thi thuật toán (tính bằng giây)
         + peak_memory: đỉnh bộ nhớ tiêu thụ thêm trong quá trình giải (tính bằng bytes)
         + expanded_nodes: tổng số trạng thái đã được mở rộng
     """
-    moves: Optional[Tuple[Action, ...]]
+    moves: Optional[Tuple[Move, ...]]
     time: float
     peak_memory: int
     expanded_nodes: int
@@ -27,7 +27,7 @@ class SolveResult:
     def __post_init__(self) -> None:
         """Chuẩn hóa và kiểm tra dữ liệu đầu vào"""
         if self.moves is not None:
-            object.__setattr__(self, "moves", tuple(Action(m) for m in self.moves))
+            object.__setattr__(self, "moves", tuple(as_move(m) for m in self.moves))
         
         if self.time < 0:
             raise ValueError("SolveResult: Thời gian chạy không được âm")
@@ -55,13 +55,13 @@ class BaseSolver(ABC):
     name: str = "BaseSolver"
 
     @abstractmethod
-    def _search(self, board: Board) -> Tuple[Optional[Sequence[Action]], int]:
+    def _search(self, board: Board) -> Tuple[Optional[Sequence[Move]], int]:
         """
             Phương thức trừu tượng thực thi thuật toán tìm kiếm cốt lõi.
             Các lớp con kế thừa bắt buộc phải cài đặt phương thức này.
 
             Trả về:
-            + Tuple[0]: Chuỗi các hướng di chuyển dẫn tới goal (hoặc None nếu vô nghiệm)
+            + Tuple[0]: Chuỗi các nước đi dẫn tới goal (hoặc None nếu vô nghiệm)
             + Tuple[1]: Số lượng trạng thái đã mở rộng (expanded_nodes)
         """
         raise NotImplementedError
@@ -96,10 +96,10 @@ class BaseSolver(ABC):
     def reconstruct_path(
         came_from: CameFrom,
         goal_state: State,
-    ) -> Tuple[Action, ...]:
+    ) -> Tuple[Move, ...]:
         """
             Hàm tiện ích: Truy vết lại chuỗi hướng đi từ trạng thái đích về trạng thái đầu.
-            + came_from: dict ánh xạ state_con -> (state_cha, hướng_đi_tạo_ra_state_con)
+            + came_from: dict ánh xạ state_con -> (state_cha, nước_đi_tạo_ra_state_con)
             + goal_state: trạng thái đích khi kết thúc tìm kiếm
         """
         moves = []
@@ -118,14 +118,14 @@ class BaseSolver(ABC):
         return tuple(moves)
 
     @staticmethod
-    def verify_solution(board: Board, moves: Sequence[Action]) -> bool:
+    def verify_solution(board: Board, moves: Sequence[Move]) -> bool:
         """
             Hàm tiện ích: Kiểm tra một chuỗi bước đi có hợp lệ và dẫn tới đúng ô đích không.
             Hữu ích cho cả unit test (test_solvers.py) và kiểm tra chéo khi chạy benchmark.
         """
         state = board.initial_state
-        for direction in moves:
-            next_state = get_next_state(board, state, direction)
+        for move in moves:
+            next_state = get_next_state(board, state, move)
             if next_state is None:
                 return False
             state = next_state

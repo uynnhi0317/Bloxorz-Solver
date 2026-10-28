@@ -150,13 +150,6 @@ class Board:
             return VOID_TILE
         return self.tiles[row][col]
 
-    def bridge_index(self, bridge_id: str) -> int:
-        """Tra cứu thứ tự cầu theo bridge_id"""
-        try:
-            return self.bridge_ids.index(bridge_id)
-        except ValueError as exc:
-            raise KeyError(f"Bridge: Cầu không xác định: {bridge_id}") from exc
-
     @property
     def initial_state(self) -> State:
         """Tạo cấu hình ban đầu của sàn chơi với trạng thái khởi tạo của các cây cầu"""
@@ -170,7 +163,6 @@ class Board:
             Các trường trong Mapping (JSON):
             - name: tên màn chơi
             - start: vị trí bắt đầu
-            - goal: đích đến
             - initial_closed_bridges: danh sách ID cầu bắt đầu ở trạng thái đóng, các cầu còn lại bắt đầu mở
             - tiles: mảng 2 chiều gồm các ô, mỗi tile có các trường sau:
                 + type: loại ô
