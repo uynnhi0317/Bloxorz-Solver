@@ -11,6 +11,7 @@ import math
 from collections import deque
 from pathlib import Path
 from typing import Callable, Deque, Dict, List, Optional, Tuple
+import threading
 
 import pygame
 
@@ -20,6 +21,7 @@ from .animations import (Animation, BridgeFlips, Sequence as AnimSequence, anima
 from .controls import COLORS, KEY_ACTIONS, Button, Menu, draw_caps, draw_divider, draw_text, draw_title
 from .theme import Background
 from .renderer import Renderer
+from solvers import SolveResult
 
 SOURCE_DIR = Path(__file__).resolve().parent.parent
 STAGE_GROUPS = ("simple", "fragile", "switch", "combined")  # thứ tự tăng dần độ khó
@@ -38,7 +40,7 @@ CREDITS: List[Tuple[str, Tuple[str, str]]] = [
                       "UI Programmer · Tools & Benchmark Engineer")),
 ]
 
-Solver = Callable[[Board, State], Optional[List[Action]]]
+Solver = Callable[[Board, State], "SolveResult"]  # có .moves/.time/.peak_memory/.expanded_nodes
 
 
 def discover_stages(root: Path = SOURCE_DIR) -> List[Path]:
@@ -165,6 +167,10 @@ class App:
         self.solve_buttons = {name: Button(name, enabled=False) for name in ("BFS", "DFS", "UCS", "A*")}
         self.hud_buttons = [self.btn_restart, *self.solve_buttons.values()]
 
+        self.solving: Optional[str] = None
+        self._solve_out = None          # (name, start_state, result, error)
+        self.last_stats = None          # (name, result)
+
     # ------------------------------------------------------------------ API cho T14
     def register_solver(self, name: str, fn: Solver) -> None:
         self.solvers[name] = fn
@@ -198,17 +204,41 @@ class App:
 
     def run_solver(self, name: str) -> None:
         s = self.session
-        if s is None or s.status != "playing" or s.anim is not None or s.replay:
+        if s is None or s.status != "playing" or s.anim is not None or s.replay or self.solving:
             return
         fn = self.solvers.get(name)
         if fn is None:
             self.toast(f"Solver {name} chưa được tích hợp")
             return
-        actions = fn(s.board, s.state)
-        if actions is None:
+        self.solving = name
+        self.toast(f"{name}: đang giải...", 600000)
+        board, start = s.board, s.state
+
+        def work() -> None:
+            try:
+                self._solve_out = (name, start, fn(board, start), None)
+            except Exception as exc:
+                self._solve_out = (name, start, None, exc)
+
+        threading.Thread(target=work, daemon=True).start()
+
+    def _poll_solver(self) -> None:
+        out, self._solve_out = self._solve_out, None
+        if out is None:
+            return
+        name, start, res, err = out
+        self.solving, self.toast_ms = None, 0.0
+        s = self.session
+        if self.scene != "play" or s is None or s.status != "playing" or s.state != start:
+            return  # người chơi đã thoát/restart/đi tiếp: kết quả cũ, bỏ
+        if err is not None:
+            self.toast(f"{name} lỗi: {err}", 4000)
+            return
+        self.last_stats = (name, res)
+        if res.moves is None:
             self.toast(f"{name}: không tìm thấy lời giải")
         else:
-            s.start_replay(actions)
+            s.start_replay(list(res.moves))
 
     # ------------------------------------------------------------------ event
     def handle_event(self, e: pygame.event.Event) -> None:
@@ -294,7 +324,7 @@ class App:
                 self.paused = True
             elif e.key == pygame.K_r:
                 self.restart()
-            elif e.key in KEY_ACTIONS and not s.replay:  # đang replay lời giải thì khóa input
+            elif e.key in KEY_ACTIONS and not s.replay and not self.solving:  # đang replay lời giải thì khóa input
                 s.try_action(KEY_ACTIONS[e.key])
         elif e.type == pygame.MOUSEBUTTONDOWN and e.button == 1:
             if self.btn_pause.hit(e.pos):
@@ -316,6 +346,7 @@ class App:
                 self.session.renderer.set_area(self.board_area())
         self.toast_ms = max(0.0, self.toast_ms - dt)
         self.background.update(dt)
+        self._poll_solver()
 
         if self.scene == "credits":
             self.credits_y -= dt / 10
@@ -380,6 +411,11 @@ class App:
         s = self.session
         r = draw_text(surf, f"Stage {s.index + 1}", 22, COLORS["text"], bold=True, midleft=(66, HUD_H // 2))
         draw_text(surf, f"Moves: {s.moves}", 20, COLORS["muted"], midleft=(r.right + 24, HUD_H // 2))
+        if self.last_stats:
+            name, r = self.last_stats
+            txt = (f"{name} | {r.time * 1000:.1f} ms | {r.peak_memory / 1024:.0f} KiB | "
+                f"{r.expanded_nodes} nodes | moves: {r.solution_length}")
+            draw_text(surf, txt, 25, COLORS["text"], bottomleft=(16, surf.get_height() - 12))
 
     def _draw_overlay(self, surf, title, color, subtitle, menu: Menu) -> None:
         """Overlay như Paused, Win, Lose"""
