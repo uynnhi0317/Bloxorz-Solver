@@ -1,6 +1,6 @@
 from typing import List, Optional, Sequence, Set, Tuple
 
-from game import *
+from game import Board, Move, State, get_successors, is_goal
 from solvers.base import BaseSolver
 
 
