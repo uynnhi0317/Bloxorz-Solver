@@ -170,6 +170,7 @@ class App:
         self.solving: Optional[str] = None
         self._solve_out = None          # (name, start_state, result, error)
         self.last_stats = None          # (name, result)
+        self._gen = 0
 
     # ------------------------------------------------------------------ API cho T14
     def register_solver(self, name: str, fn: Solver) -> None:
@@ -184,7 +185,16 @@ class App:
         w, h = self.screen.get_size()
         return pygame.Rect(0, HUD_H, w, h - HUD_H)
 
+    def _reset_solver_ui(self) -> None:
+        """Xoá số liệu, bỏ kết quả solver đang chạy dở."""
+        self._gen += 1
+        self.solving = None
+        self._solve_out = None
+        self.last_stats = None
+        self.toast_ms = 0.0
+
     def start_stage(self, index: int) -> None:
+        self._reset_solver_ui()
         try:
             board = load_stage(self.stages[index])
         except Exception as exc:  # file stage hỏng: không crash cả app
@@ -198,6 +208,7 @@ class App:
 
     def restart(self) -> None:
         if self.session:
+            self._reset_solver_ui()
             self.session.reset()
             self.session.start_intro()
             self.paused, self._end_status = False, "playing"
@@ -383,6 +394,7 @@ class App:
         elif self.scene == "play":
             self.session.draw(surf)
             self._draw_hud(surf)
+            self._draw_metrics(surf)
             if self.paused:
                 self._draw_overlay(surf, "Paused", COLORS["text"], "", self.pause_menu)
             elif self.session.status == "won":
@@ -411,11 +423,6 @@ class App:
         s = self.session
         r = draw_text(surf, f"Stage {s.index + 1}", 22, COLORS["text"], bold=True, midleft=(66, HUD_H // 2))
         draw_text(surf, f"Moves: {s.moves}", 20, COLORS["muted"], midleft=(r.right + 24, HUD_H // 2))
-        if self.last_stats:
-            name, r = self.last_stats
-            txt = (f"{name} | {r.time * 1000:.1f} ms | {r.peak_memory / 1024:.0f} KiB | "
-                f"{r.expanded_nodes} nodes | moves: {r.solution_length}")
-            draw_text(surf, txt, 25, COLORS["text"], bottomleft=(16, surf.get_height() - 12))
 
     def _draw_overlay(self, surf, title, color, subtitle, menu: Menu) -> None:
         """Overlay như Paused, Win, Lose"""
@@ -447,6 +454,37 @@ class App:
             draw_text(surf, line2, 25, COLORS["muted"], midtop=(w // 2, y + 130))
             y += 260
         draw_text(surf, "Esc: back", 18, COLORS["muted"], bottomright=(w - 16, h - 12))
+
+    def _draw_metrics(self, surf: pygame.Surface) -> None:
+        """Panel SEARCH METRICS góc phải, chỉ hiện khi đã có kết quả solver."""
+        if not self.last_stats:
+            return
+        name, r = self.last_stats
+        rows = [
+            ("Search time", f"{r.time * 1000:.2f} ms"),
+            ("Nodes expanded", f"{r.expanded_nodes:,}"),
+            ("Memory usage (peak)", f"{r.peak_memory / 1024:.1f} KB"),
+            ("Solution length", f"{r.solution_length} moves" if r.is_solved else "no solution"),
+        ]
+        w, pad, head, row_h = 320, 14, 44, 36
+        panel = pygame.Rect(surf.get_width() - w - 12, HUD_H + 12, w, head + len(rows) * row_h + pad)
+
+        bg = pygame.Surface(panel.size, pygame.SRCALPHA)
+        pygame.draw.rect(bg, (*COLORS["panel"], 215), bg.get_rect(), border_radius=10)
+        surf.blit(bg, panel)
+        pygame.draw.rect(surf, COLORS["border"], panel, 1, border_radius=10)
+
+        pygame.draw.rect(surf, COLORS["accent"], (panel.x + pad, panel.y + 14, 3, 18))
+        draw_text(surf, f"SEARCH METRICS - {name}", 18, COLORS["text"], bold=True,
+                midleft=(panel.x + pad + 10, panel.y + 23))
+
+        y = panel.y + head
+        for label, value in rows:
+            row = pygame.Rect(panel.x + pad, y, w - 2 * pad, row_h - 6)
+            pygame.draw.rect(surf, (*COLORS["bar"],), row, border_radius=6)
+            draw_text(surf, label, 16, COLORS["muted"], midleft=(row.x + 10, row.centery))
+            draw_text(surf, value, 18, COLORS["text"], bold=True, midright=(row.right - 10, row.centery))
+            y += row_h
 
     # --- chọn màn / Load Stage
     def _select_rects(self) -> List[pygame.Rect]:
