@@ -1,6 +1,6 @@
 from dataclasses import dataclass
 from enum import Enum
-from typing import Any, Mapping, Optional, Tuple, Literal
+from typing import Any, Mapping, Optional, Tuple
 from .state import Coord
 
 # Quy định loại tile

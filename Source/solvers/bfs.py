@@ -2,13 +2,13 @@ from collections import deque
 from typing import Optional, Sequence, Tuple
 
 from game.board import Board
-from game.rules import Action, get_successors, is_goal
+from game.rules import Move, get_successors, is_goal
 from solvers.base import BaseSolver, CameFrom
 
 class BFSSolver(BaseSolver):
     name = "BFS"
 
-    def _search(self, board: Board) -> Tuple[Optional[Sequence[Action]], int]:
+    def _search(self, board: Board) -> Tuple[Optional[Sequence[Move]], int]:
         start = board.initial_state
         came_from: CameFrom = {start: (None, None)}  # Đồng thời là visited set
         if is_goal(board, start):

@@ -1,7 +1,7 @@
 """app.py - Vòng lặp chính: menu game, chọn màn, credits, chơi màn (HUD, pause, thắng/thua).
 
 Cách T14 gắn solver vào:
-    app.register_solver("BFS", fn)   # fn(board, state) -> Optional[List[Action]]
+    app.register_solver("BFS", fn)   # fn(board, state) -> Optional[List[Move]]
 Nút Solve tương ứng tự bật; kết quả được replay bằng animation. Số liệu (time, memory...)
 do T14 tự hiển thị / lưu.
 """
@@ -11,15 +11,17 @@ import math
 from collections import deque
 from pathlib import Path
 from typing import Callable, Deque, Dict, List, Optional, Tuple
+import threading
 
 import pygame
 
-from game import Action, Board, State, get_next_state, is_goal, load_stage
+from game import Board, Move, State, Action, get_next_state, is_goal, load_stage
 from .animations import (Animation, BridgeFlips, Sequence as AnimSequence, animate_fall, animate_intro, animate_move,
-                         animate_outro, animate_win, is_bump)
+                         animate_outro, animate_win, is_bump, DIR_DELTA)
 from .controls import COLORS, KEY_ACTIONS, Button, Menu, draw_caps, draw_divider, draw_text, draw_title
 from .theme import Background
 from .renderer import Renderer
+from solvers import SolveResult
 
 SOURCE_DIR = Path(__file__).resolve().parent.parent
 STAGE_GROUPS = ("simple", "fragile", "switch", "combined")  # thứ tự tăng dần độ khó
@@ -38,7 +40,7 @@ CREDITS: List[Tuple[str, Tuple[str, str]]] = [
                       "UI Programmer · Tools & Benchmark Engineer")),
 ]
 
-Solver = Callable[[Board, State], Optional[List[Action]]]
+Solver = Callable[[Board, State], "SolveResult"]  # có .moves/.time/.peak_memory/.expanded_nodes
 
 
 def discover_stages(root: Path = SOURCE_DIR) -> List[Path]:
@@ -64,11 +66,13 @@ class PlaySession:
 
     def reset(self) -> None:
         self.state: State = self.board.initial_state
+        self.selected: Optional[Tuple[int, int]] = None  # cube đang điều khiển khi block tách
+        self.renderer.selected = None
         self.moves = 0
         self.status = "playing"  # playing | won | lost
         self.anim: Optional[Animation] = None
         self.pending: Optional[Tuple[State, str]] = None
-        self.replay: Deque[Action] = deque()
+        self.replay: Deque[Move] = deque()
         self.end_fx = None  # hiệu ứng tile còn lại sau animation cuối (vd tile fragile đã vỡ)
         self.flips.clear()
         self.renderer.prepare(self.state.bridge_mask)  # dựng sẵn ảnh sàn khử răng cưa
@@ -77,33 +81,56 @@ class PlaySession:
         """Vào màn / restart: tile bay lên, khối rơi xuống; input bị khóa tới khi xong."""
         self.anim, self.pending = animate_intro(self.renderer, self.state), (self.state, "playing")
 
-    def try_action(self, action: Action) -> bool:
+    def toggle_cube(self) -> None:
+        """Đổi cube đang điều khiển (phím Space). Chỉ đổi trạng thái UI, không tính bước."""
+        if self.anim is not None or self.status != "playing" or self.state.split_positions is None:
+            return
+        a, b = self.state.split_positions
+        self.selected = b if self.selected == a else a
+        self.renderer.selected = self.selected
+
+    def _follow_selection(self, move: Move, nxt: State) -> None:
+        """Cập nhật cube đang chọn sau một nước đi hợp lệ"""
+        if nxt.split_positions is None:  # đã ghép lại
+            self.selected = None
+        elif self.state.split_positions is None:  # vừa tách: mặc định chọn cube đầu
+            self.selected = nxt.split_positions[0]
+        else:  # cube đang chọn đi theo vị trí mới
+            dr, dc = DIR_DELTA[move.action]
+            if move.cube is not None:
+                self.selected = (move.cube[0] + dr, move.cube[1] + dc)
+        self.renderer.selected = self.selected
+
+    def try_action(self, act: Action | Move) -> bool:
         """Thực hiện một hành động; trả về False nếu bị bỏ qua (đang animation, đã kết thúc, bị chặn)."""
         if self.anim is not None or self.status != "playing":
             return False
-        nxt = get_next_state(self.board, self.state, action)
-        if action == Action.SWITCH_CONTROL:  # chỉ đổi cube active, không tính bước
-            if nxt is None:
-                return False
-            self.state = nxt
-            return True
+        split = self.state.split_positions is not None
+        if split and self.selected not in self.state.split_positions: # luôn có một cube được chọn
+            self.selected = self.renderer.selected = self.state.split_positions[0]
+        move = act if isinstance(act, Move) else Move(act, self.selected if split else None)
+        if split and move.cube is not None:  # replay: tự đổi cube theo lời giải
+            self.selected = self.renderer.selected = move.cube
+        nxt = get_next_state(self.board, self.state, move)
         if nxt is None:
-            if is_bump(self.state, action):  # cube đâm vào cube kia: bị chặn, không phải thua
+            if is_bump(self.state, move):  # cube đâm vào cube kia: bị chặn, không phải thua
                 return False
-            self.anim = animate_fall(self.renderer, self.state, action)
+            moving = self.state.split_positions.index(move.cube) if split and move.cube is not None else None
+            self.anim = animate_fall(self.renderer, self.state, move.action, moving=moving)
             self.pending = (self.state, "lost")
             return True
         self.moves += 1
-        move = animate_move(self.renderer, self.state, action, nxt)
+        move_anim = animate_move(self.renderer, self.state, move, nxt)
+        self._follow_selection(move, nxt)
         if is_goal(self.board, nxt):
-            self.anim = AnimSequence(move, animate_win(self.renderer, nxt), animate_outro(self.renderer, nxt))
+            self.anim = AnimSequence(move_anim, animate_win(self.renderer, nxt), animate_outro(self.renderer, nxt))
             self.pending = (nxt, "won")
         else:
-            self.anim, self.pending = move, (nxt, "playing")
+            self.anim, self.pending = move_anim, (nxt, "playing")
         return True
 
-    def start_replay(self, actions: List[Action]) -> None:
-        self.replay = deque(actions)
+    def start_replay(self, moves: List[Move]) -> None:
+        self.replay = deque(moves)
 
     def update(self, dt_ms: float) -> None:
         self.flips.update(dt_ms)
@@ -137,8 +164,11 @@ class App:
         pygame.init()
         pygame.display.set_caption("Bloxorz Solver")
         info = pygame.display.Info()
-        width, height = info.current_w, info.current_h
-        self.screen = pygame.display.set_mode((width, height), pygame.FULLSCREEN)
+
+        # Set rescale = 1 to make fullscreen (instead of pygame.FULLSCREEN, since it might cause lag (?) ), the default is 0.8
+        width, height, rescale = info.current_w, info.current_h, 0.8
+        self.screen = pygame.display.set_mode((width*rescale, height*rescale), pygame.RESIZABLE)
+
         self.clock = pygame.time.Clock()
         self.running = True
         self.stages = discover_stages()
@@ -161,6 +191,10 @@ class App:
         self.btn_restart = Button("Restart")
         self.solve_buttons = {name: Button(name, enabled=False) for name in ("BFS", "DFS", "UCS", "A*")}
         self.hud_buttons = [self.btn_restart, *self.solve_buttons.values()]
+
+        self.solving: Optional[str] = None
+        self._solve_out = None  # (name, start_state, result, error)
+        self.last_stats = None  # (name, result)
 
     # ------------------------------------------------------------------ API cho T14
     def register_solver(self, name: str, fn: Solver) -> None:
@@ -195,17 +229,41 @@ class App:
 
     def run_solver(self, name: str) -> None:
         s = self.session
-        if s is None or s.status != "playing" or s.anim is not None or s.replay:
+        if s is None or s.status != "playing" or s.anim is not None or s.replay or self.solving:
             return
         fn = self.solvers.get(name)
         if fn is None:
             self.toast(f"Solver {name} chưa được tích hợp")
             return
-        actions = fn(s.board, s.state)
-        if actions is None:
+        self.solving = name
+        self.toast(f"{name}: đang giải...", 600000)
+        board, start = s.board, s.state
+
+        def work() -> None:
+            try:
+                self._solve_out = (name, start, fn(board, start), None)
+            except Exception as exc:
+                self._solve_out = (name, start, None, exc)
+
+        threading.Thread(target=work, daemon=True).start()
+
+    def _poll_solver(self) -> None:
+        out, self._solve_out = self._solve_out, None
+        if out is None:
+            return
+        name, start, res, err = out
+        self.solving, self.toast_ms = None, 0.0
+        s = self.session
+        if self.scene != "play" or s is None or s.status != "playing" or s.state != start:
+            return  # người chơi đã thoát/restart/đi tiếp: kết quả cũ, bỏ
+        if err is not None:
+            self.toast(f"{name} lỗi: {err}", 4000)
+            return
+        self.last_stats = (name, res)
+        if res.moves is None:
             self.toast(f"{name}: không tìm thấy lời giải")
         else:
-            s.start_replay(actions)
+            s.start_replay(list(res.moves))
 
     # ------------------------------------------------------------------ event
     def handle_event(self, e: pygame.event.Event) -> None:
@@ -291,7 +349,9 @@ class App:
                 self.paused = True
             elif e.key == pygame.K_r:
                 self.restart()
-            elif e.key in KEY_ACTIONS and not s.replay:  # đang replay lời giải thì khóa input
+            elif e.key == pygame.K_SPACE and not s.replay:  # đổi cube đang điều khiển
+                s.toggle_cube()
+            elif e.key in KEY_ACTIONS and not s.replay and not self.solving:  # đang replay lời giải thì khóa input
                 s.try_action(KEY_ACTIONS[e.key])
         elif e.type == pygame.MOUSEBUTTONDOWN and e.button == 1:
             if self.btn_pause.hit(e.pos):
@@ -313,6 +373,7 @@ class App:
                 self.session.renderer.set_area(self.board_area())
         self.toast_ms = max(0.0, self.toast_ms - dt)
         self.background.update(dt)
+        self._poll_solver()
 
         if self.scene == "credits":
             self.credits_y -= dt / 10
@@ -377,6 +438,11 @@ class App:
         s = self.session
         r = draw_text(surf, f"Stage {s.index + 1}", 22, COLORS["text"], bold=True, midleft=(66, HUD_H // 2))
         draw_text(surf, f"Moves: {s.moves}", 20, COLORS["muted"], midleft=(r.right + 24, HUD_H // 2))
+        if self.last_stats:
+            name, r = self.last_stats
+            txt = (f"{name} | {r.time * 1000:.1f} ms | {r.peak_memory / 1024:.0f} KiB | "
+                f"{r.expanded_nodes} nodes | moves: {r.solution_length}")
+            draw_text(surf, txt, 25, COLORS["text"], bottomleft=(16, surf.get_height() - 12))
 
     def _draw_overlay(self, surf, title, color, subtitle, menu: Menu) -> None:
         """Overlay như Paused, Win, Lose"""
@@ -445,32 +511,39 @@ class App:
         w, h = surf.get_size()
         n = len(self.stages)
         page, pages = self.select_index // PAGE_SIZE, max(1, math.ceil(n / PAGE_SIZE))
-        draw_text(surf, "Select Stage", 30, COLORS["text"], bold=True, center=(w // 2, 56))
-        draw_divider(surf, w // 2, h // 2 - 400, 340, flip=True)
-
-        # tỉ lệ thật của ảnh thumbnail (các ảnh này lưu trong Source/gui/assets/thumb)
-        THUMB_WID, THUMB_HEI = 400, 300            
+        draw_text(surf, "Select Stage", 40, COLORS["text"], bold=True, center=(w // 2, 80))
+        draw_divider(surf, w // 2, 120, 340, flip=True)            
 
         # các slot hiện stage
-        for slot, r in enumerate(self._select_rects()):
-            idx = page * PAGE_SIZE + slot
-            # card bám sát thumbnail
-            card = pygame.Rect(0, 0, max(THUMB_WID + 12, 110), THUMB_HEI + 12)
-            card.center = r.center
+        rects = self._select_rects()
+        # Kích thước card chuẩn: lấy từ thumbnail đầu tiên có trên trang này
+        ref = None
+        for i in range(page * PAGE_SIZE, min(n, (page + 1) * PAGE_SIZE)):
+            t = self._thumb(i, (max(1, rects[0].w - 12), max(1, rects[0].h - 12)))
+            if t:
+                ref = (max(t.get_width() + 12, 110), t.get_height() + 12)
+                break
 
-            if idx >= n:  # ô trống giữ nguyên bố cục 2x4
-                pygame.draw.rect(surf, (34, 37, 48), card, 1, border_radius=10)
+        for slot, r in enumerate(rects):
+            idx = page * PAGE_SIZE + slot
+            if idx >= n:  # ô trống: cùng kích thước với card thật
+                empty = pygame.Rect(0, 0, *ref) if ref else r.copy()
+                empty.center = r.center
+                pygame.draw.rect(surf, (34, 37, 48), empty, 1, border_radius=10)
                 continue
             sel = idx == self.select_index
             thumb = self._thumb(idx, (max(1, r.w - 12), max(1, r.h - 12)))
             if thumb:
+                card = pygame.Rect(0, 0, max(thumb.get_width() + 6, 110), thumb.get_height() + 6)
+                card.center = r.center
                 surf.blit(thumb, thumb.get_rect(midtop=(card.centerx, card.y + 3)))
-                draw_text(surf, f"Stage {idx + 1}", 30, COLORS["accent"] if sel else COLORS["muted"],
-                          bold=sel, midbottom=(card.centerx, card.bottom + 60))
+                draw_text(surf, f"Stage {idx + 1}", 28, COLORS["accent"] if sel else COLORS["muted"],
+                          bold=sel, midbottom=(card.centerx, card.bottom + 50))
             else:
-                draw_text(surf, f"Stage {idx + 1}", 30, COLORS["accent"] if sel else COLORS["muted"],
+                card = r
+                draw_text(surf, f"Stage {idx + 1}", 26, COLORS["accent"] if sel else COLORS["muted"],
                           bold=sel, center=card.center)
-            pygame.draw.rect(surf, COLORS["text"] if sel else COLORS["border"], card, 2, border_radius=10)
+            pygame.draw.rect(surf, COLORS["accent"] if sel else COLORS["border"], card, 2, border_radius=10)
 
         # mũi tên chuyển page, text hướng dẫn manuver trong menu
         for rect, glyph, ok in zip(self._arrow_rects(), ("left", "right"), (page > 0, page < pages - 1)):
