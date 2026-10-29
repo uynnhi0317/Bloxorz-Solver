@@ -23,7 +23,7 @@ import queue
 import statistics
 from dataclasses import asdict, dataclass
 from pathlib import Path
-from typing import Iterable, List, Optional, Sequence
+from typing import Callable, Iterable, List, Optional, Sequence
 
 from game.board import Board
 from game.stage_loader import StageSource, load_stage
@@ -93,6 +93,7 @@ def measure_single(
     category: str = "custom",
     verify: bool = True,
     repeat: int = 1,
+    on_run: Optional[Callable[[], None]] = None,
 ) -> BenchmarkRecord:
     """
         Hàm đo hiệu năng chung của 1 thuật toán (solver) trên 1 màn chơi.
@@ -101,8 +102,13 @@ def measure_single(
         + category: nhóm độ khó của màn chơi (simple, fragile, switch, combined)
         + verify: tự động kiểm tra tính hợp lệ của lời giải nếu tìm thấy
         + repeat: số lần chạy lặp; thời gian lấy trung vị, bộ nhớ lấy đỉnh lớn nhất
+        + on_run: hàm gọi sau mỗi lần chạy xong (dùng để báo tiến độ cho tiến trình cha)
     """
-    runs: List[SolveResult] = [solver.solve(board) for _ in range(max(repeat, 1))]
+    runs: List[SolveResult] = []
+    for _ in range(max(repeat, 1)):
+        runs.append(solver.solve(board))
+        if on_run is not None:
+            on_run()
     result = runs[0]  # moves và expanded_nodes là tất định giữa các lần chạy
     time_sec = statistics.median(r.time for r in runs)
     peak_memory = max(r.peak_memory for r in runs)
@@ -135,9 +141,14 @@ def measure_single(
     )
 
 def _child(solver: BaseSolver, board: Board, category: str, verify: bool, repeat: int, out) -> None:
-    """Chạy trong tiến trình con: đo xong thì bỏ kết quả (dạng dict) vào queue"""
+    """
+    Chạy trong tiến trình con: mỗi lần chạy xong gửi ("run", None) vào queue,
+    đo xong toàn bộ thì gửi ("ok", record dạng dict)
+    """
     try:
-        out.put(("ok", asdict(measure_single(solver, board, category, verify, repeat))))
+        record = measure_single(solver, board, category, verify, repeat,
+                                on_run = lambda: out.put(("run", None)))
+        out.put(("ok", asdict(record)))
     except BaseException as exc:
         out.put(("error", f"{type(exc).__name__}: {exc}"))
 
@@ -152,7 +163,7 @@ def measure_with_timeout(
 ) -> BenchmarkRecord:
     """
         Tương tự như measure_single() nhưng chạy trong tiến trình con và bị giết nếu quá timeout
-        Timeout áp dụng cho mỗi lần chạy, nên tổng thời gian chờ = timeout * repeat
+        Timeout áp dụng riêng cho từng lần chạy: lần nào quá timeout thì dừng ngay
         Quá giờ hoặc lỗi --> trả về record có is_solved=False và status="timeout"/"error"
     """
     ctx = mp.get_context("spawn")
@@ -161,7 +172,14 @@ def measure_with_timeout(
     proc.start()
 
     try:
-        kind, payload = q.get(timeout = timeout * max(repeat, 1))
+        # Mỗi lần chờ chỉ tối đa timeout giây cho đúng 1 lần chạy
+        for _ in range(max(repeat, 1)):
+            kind, payload = q.get(timeout = timeout)
+            if kind != "run":  # lỗi giữa chừng
+                break
+        else:
+            # Đủ số lần chạy, chờ record cuối 
+            kind, payload = q.get(timeout = timeout)
     except queue.Empty:
         kind, payload = ("timeout", None) if proc.is_alive() else ("error", "tiến trình con thoát bất thường")
     finally:
