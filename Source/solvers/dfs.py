@@ -1,7 +1,9 @@
-from typing import List, Optional, Sequence, Set, Tuple
+from typing import Iterator, List, Optional, Sequence, Set, Tuple
 
 from game import Board, Move, State, get_successors, is_goal
 from solvers.base import BaseSolver
+
+Successors = Iterator[Tuple[Move, State]]
 
 
 class DFSSolver(BaseSolver):
@@ -9,49 +11,28 @@ class DFSSolver(BaseSolver):
 
     def _search(self, board: Board) -> Tuple[Optional[Sequence[Move]], int]:
         start = board.initial_state
-        visited: Set[State] = set()
-        moves: List[Move] = []
-
-        found, expanded = self.visit(board, start, visited, moves)
-        if found:
-            return tuple(moves), expanded
-        return None, expanded
-
-    def visit(self, board: Board, state: State, visited: Set[State], moves: List[Move],) -> Tuple[bool, int]:
-        """
-        Tìm kiếm theo chiều sâu DFS từ một trạng thái
-
-        Tham số:
-            board: Bàn chơi cần giải
-            state: Trạng thái hiện tại đang được duyệt
-            visited: Tập các trạng thái đã được thăm
-            moves: Danh sách các hành động trên đường đi hiện tại
-
-        Trả về:
-            Tuple gồm cờ cho biết đã tìm thấy đích hay chưa và
-            số trạng thái đã mở rộng trong nhánh tìm kiếm này
-        """
-        visited.add(state)
-
-        if is_goal(board, state):
-            return True, 0
+        visited: Set[State] = {start}
+        if is_goal(board, start):
+            return (), 0
 
         expanded = 1
+        stack: List[Successors] = [iter(get_successors(board, start))]
+        moves: List[Move] = []
 
-        # Duyệt qua các successor để đệ quy
-        for move, next_state in get_successors(board, state):
-            if next_state in visited:
-                continue
+        while stack:
+            for move, next_state in stack[-1]:
+                if next_state in visited:
+                    continue
+                visited.add(next_state)
+                moves.append(move)
+                if is_goal(board, next_state):
+                    return tuple(moves), expanded
+                expanded += 1
+                stack.append(iter(get_successors(board, next_state)))
+                break
+            else:
+                stack.pop()
+                if moves:
+                    moves.pop()
 
-            moves.append(move)
-            found, child_expanded = self.visit(board, next_state, visited, moves)
-            expanded += child_expanded
-
-            if found:
-                return True, expanded
-
-            # Nhánh này không tới đích, quay lui bằng cách bỏ nước đi vừa thêm
-            moves.pop()
-
-        # Không tìm thấy đáp án từ trạng thái này
-        return False, expanded
+        return None, expanded
