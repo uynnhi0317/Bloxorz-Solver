@@ -27,3 +27,4 @@ Thumbs.db
 Source/experiments/results/*.csv
 Source/experiments/results/*.png
 Source/experiments/results/*.jpg
+Source/experiments/results/
