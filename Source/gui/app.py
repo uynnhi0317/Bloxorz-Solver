@@ -11,6 +11,7 @@ import math
 from collections import deque
 from pathlib import Path
 from typing import Callable, Deque, Dict, List, Optional, Tuple
+import threading
 
 import pygame
 
@@ -20,6 +21,7 @@ from .animations import (Animation, BridgeFlips, Sequence as AnimSequence, anima
 from .controls import COLORS, KEY_ACTIONS, Button, Menu, draw_caps, draw_divider, draw_text, draw_title
 from .theme import Background
 from .renderer import Renderer
+from solvers import SolveResult
 
 SOURCE_DIR = Path(__file__).resolve().parent.parent
 STAGE_GROUPS = ("simple", "fragile", "switch", "combined")  # thứ tự tăng dần độ khó
@@ -38,7 +40,7 @@ CREDITS: List[Tuple[str, Tuple[str, str]]] = [
                       "UI Programmer · Tools & Benchmark Engineer")),
 ]
 
-Solver = Callable[[Board, State], Optional[List[Move]]]
+Solver = Callable[[Board, State], "SolveResult"]  # có .moves/.time/.peak_memory/.expanded_nodes
 
 
 def discover_stages(root: Path = SOURCE_DIR) -> List[Path]:
@@ -162,8 +164,11 @@ class App:
         pygame.init()
         pygame.display.set_caption("Bloxorz Solver")
         info = pygame.display.Info()
-        width, height = info.current_w, info.current_h
-        self.screen = pygame.display.set_mode((width, height), pygame.FULLSCREEN)
+
+        # Set rescale = 1 to make fullscreen (instead of pygame.FULLSCREEN, since it might cause lag (?) ), the default is 0.8
+        width, height, rescale = info.current_w, info.current_h, 0.8
+        self.screen = pygame.display.set_mode((width*rescale, height*rescale), pygame.RESIZABLE)
+
         self.clock = pygame.time.Clock()
         self.running = True
         self.stages = discover_stages()
@@ -186,6 +191,10 @@ class App:
         self.btn_restart = Button("Restart")
         self.solve_buttons = {name: Button(name, enabled=False) for name in ("BFS", "DFS", "UCS", "A*")}
         self.hud_buttons = [self.btn_restart, *self.solve_buttons.values()]
+
+        self.solving: Optional[str] = None
+        self._solve_out = None  # (name, start_state, result, error)
+        self.last_stats = None  # (name, result)
 
     # ------------------------------------------------------------------ API cho T14
     def register_solver(self, name: str, fn: Solver) -> None:
@@ -220,17 +229,41 @@ class App:
 
     def run_solver(self, name: str) -> None:
         s = self.session
-        if s is None or s.status != "playing" or s.anim is not None or s.replay:
+        if s is None or s.status != "playing" or s.anim is not None or s.replay or self.solving:
             return
         fn = self.solvers.get(name)
         if fn is None:
             self.toast(f"Solver {name} chưa được tích hợp")
             return
-        actions = fn(s.board, s.state)
-        if actions is None:
+        self.solving = name
+        self.toast(f"{name}: đang giải...", 600000)
+        board, start = s.board, s.state
+
+        def work() -> None:
+            try:
+                self._solve_out = (name, start, fn(board, start), None)
+            except Exception as exc:
+                self._solve_out = (name, start, None, exc)
+
+        threading.Thread(target=work, daemon=True).start()
+
+    def _poll_solver(self) -> None:
+        out, self._solve_out = self._solve_out, None
+        if out is None:
+            return
+        name, start, res, err = out
+        self.solving, self.toast_ms = None, 0.0
+        s = self.session
+        if self.scene != "play" or s is None or s.status != "playing" or s.state != start:
+            return  # người chơi đã thoát/restart/đi tiếp: kết quả cũ, bỏ
+        if err is not None:
+            self.toast(f"{name} lỗi: {err}", 4000)
+            return
+        self.last_stats = (name, res)
+        if res.moves is None:
             self.toast(f"{name}: không tìm thấy lời giải")
         else:
-            s.start_replay(actions)
+            s.start_replay(list(res.moves))
 
     # ------------------------------------------------------------------ event
     def handle_event(self, e: pygame.event.Event) -> None:
@@ -318,7 +351,7 @@ class App:
                 self.restart()
             elif e.key == pygame.K_SPACE and not s.replay:  # đổi cube đang điều khiển
                 s.toggle_cube()
-            elif e.key in KEY_ACTIONS and not s.replay:  # đang replay lời giải thì khóa input
+            elif e.key in KEY_ACTIONS and not s.replay and not self.solving:  # đang replay lời giải thì khóa input
                 s.try_action(KEY_ACTIONS[e.key])
         elif e.type == pygame.MOUSEBUTTONDOWN and e.button == 1:
             if self.btn_pause.hit(e.pos):
@@ -340,6 +373,7 @@ class App:
                 self.session.renderer.set_area(self.board_area())
         self.toast_ms = max(0.0, self.toast_ms - dt)
         self.background.update(dt)
+        self._poll_solver()
 
         if self.scene == "credits":
             self.credits_y -= dt / 10
@@ -404,6 +438,11 @@ class App:
         s = self.session
         r = draw_text(surf, f"Stage {s.index + 1}", 22, COLORS["text"], bold=True, midleft=(66, HUD_H // 2))
         draw_text(surf, f"Moves: {s.moves}", 20, COLORS["muted"], midleft=(r.right + 24, HUD_H // 2))
+        if self.last_stats:
+            name, r = self.last_stats
+            txt = (f"{name} | {r.time * 1000:.1f} ms | {r.peak_memory / 1024:.0f} KiB | "
+                f"{r.expanded_nodes} nodes | moves: {r.solution_length}")
+            draw_text(surf, txt, 25, COLORS["text"], bottomleft=(16, surf.get_height() - 12))
 
     def _draw_overlay(self, surf, title, color, subtitle, menu: Menu) -> None:
         """Overlay như Paused, Win, Lose"""
@@ -472,32 +511,39 @@ class App:
         w, h = surf.get_size()
         n = len(self.stages)
         page, pages = self.select_index // PAGE_SIZE, max(1, math.ceil(n / PAGE_SIZE))
-        draw_text(surf, "Select Stage", 30, COLORS["text"], bold=True, center=(w // 2, 56))
-        draw_divider(surf, w // 2, h // 2 - 400, 340, flip=True)
-
-        # tỉ lệ thật của ảnh thumbnail (các ảnh này lưu trong Source/gui/assets/thumb)
-        THUMB_WID, THUMB_HEI = 400, 300            
+        draw_text(surf, "Select Stage", 40, COLORS["text"], bold=True, center=(w // 2, 80))
+        draw_divider(surf, w // 2, 120, 340, flip=True)            
 
         # các slot hiện stage
-        for slot, r in enumerate(self._select_rects()):
-            idx = page * PAGE_SIZE + slot
-            # card bám sát thumbnail
-            card = pygame.Rect(0, 0, max(THUMB_WID + 12, 110), THUMB_HEI + 12)
-            card.center = r.center
+        rects = self._select_rects()
+        # Kích thước card chuẩn: lấy từ thumbnail đầu tiên có trên trang này
+        ref = None
+        for i in range(page * PAGE_SIZE, min(n, (page + 1) * PAGE_SIZE)):
+            t = self._thumb(i, (max(1, rects[0].w - 12), max(1, rects[0].h - 12)))
+            if t:
+                ref = (max(t.get_width() + 12, 110), t.get_height() + 12)
+                break
 
-            if idx >= n:  # ô trống giữ nguyên bố cục 2x4
-                pygame.draw.rect(surf, (34, 37, 48), card, 1, border_radius=10)
+        for slot, r in enumerate(rects):
+            idx = page * PAGE_SIZE + slot
+            if idx >= n:  # ô trống: cùng kích thước với card thật
+                empty = pygame.Rect(0, 0, *ref) if ref else r.copy()
+                empty.center = r.center
+                pygame.draw.rect(surf, (34, 37, 48), empty, 1, border_radius=10)
                 continue
             sel = idx == self.select_index
             thumb = self._thumb(idx, (max(1, r.w - 12), max(1, r.h - 12)))
             if thumb:
+                card = pygame.Rect(0, 0, max(thumb.get_width() + 6, 110), thumb.get_height() + 6)
+                card.center = r.center
                 surf.blit(thumb, thumb.get_rect(midtop=(card.centerx, card.y + 3)))
-                draw_text(surf, f"Stage {idx + 1}", 30, COLORS["accent"] if sel else COLORS["muted"],
-                          bold=sel, midbottom=(card.centerx, card.bottom + 60))
+                draw_text(surf, f"Stage {idx + 1}", 28, COLORS["accent"] if sel else COLORS["muted"],
+                          bold=sel, midbottom=(card.centerx, card.bottom + 50))
             else:
-                draw_text(surf, f"Stage {idx + 1}", 30, COLORS["accent"] if sel else COLORS["muted"],
+                card = r
+                draw_text(surf, f"Stage {idx + 1}", 26, COLORS["accent"] if sel else COLORS["muted"],
                           bold=sel, center=card.center)
-            pygame.draw.rect(surf, COLORS["text"] if sel else COLORS["border"], card, 2, border_radius=10)
+            pygame.draw.rect(surf, COLORS["accent"] if sel else COLORS["border"], card, 2, border_radius=10)
 
         # mũi tên chuyển page, text hướng dẫn manuver trong menu
         for rect, glyph, ok in zip(self._arrow_rects(), ("left", "right"), (page > 0, page < pages - 1)):
