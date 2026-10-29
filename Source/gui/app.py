@@ -28,6 +28,8 @@ STAGE_GROUPS = ("simple", "fragile", "switch", "combined")  # thứ tự tăng d
 PAGE_COLS, PAGE_ROWS = 4, 2
 PAGE_SIZE = PAGE_COLS * PAGE_ROWS
 HUD_H = 56
+PANEL_BASE_W = 340          # bề rộng panel ở hệ số s = 1
+PANEL_MARGIN = 12
 
 CREDITS: List[Tuple[str, Tuple[str, str]]] = [
     ("Trần Tuấn Kiệt", ("Lead Systems Programmer · Core Architecture & Stage",
@@ -171,6 +173,34 @@ class App:
         self._solve_out = None          # (name, start_state, result, error)
         self.last_stats = None          # (name, result)
         self._gen = 0
+        self.panel_on = False
+
+    #-------------------------------------------------------------------
+    def _set_panel(self, on: bool) -> None:
+        """Mở/đóng cột metrics; board được dựng lại cho vùng mới."""
+        if self.panel_on == on:
+            return
+        self.panel_on = on
+        if self.session:
+            self.session.renderer.set_area(self.board_area())
+            self.session.renderer.prepare(self.session.state.bridge_mask)  # dựng sẵn, đỡ khựng
+
+    def _panel_scale(self) -> float:
+        """Hệ số theo cửa sổ: =1 ở ~1536x864 (80% màn 1920x1080), kẹp trong [0.6, 1.5]."""
+        w, h = self.screen.get_size()
+        return max(0.6, min(1.5, min(w / 1536, h / 864)))
+
+    def _panel_w(self) -> int:
+        return int(PANEL_BASE_W * self._panel_scale())
+
+    def _reset_solver_ui(self) -> None:
+        """Xoá số liệu, bỏ kết quả solver đang chạy dở."""
+        self._gen += 1
+        self.solving = None
+        self._solve_out = None
+        self.last_stats = None
+        self.toast_ms = 0.0
+        self._set_panel(False)
 
     # ------------------------------------------------------------------ API cho T14
     def register_solver(self, name: str, fn: Solver) -> None:
@@ -183,15 +213,8 @@ class App:
 
     def board_area(self) -> pygame.Rect:
         w, h = self.screen.get_size()
-        return pygame.Rect(0, HUD_H, w, h - HUD_H)
-
-    def _reset_solver_ui(self) -> None:
-        """Xoá số liệu, bỏ kết quả solver đang chạy dở."""
-        self._gen += 1
-        self.solving = None
-        self._solve_out = None
-        self.last_stats = None
-        self.toast_ms = 0.0
+        side = self._panel_w() + 2 * PANEL_MARGIN if self.panel_on else 0
+        return pygame.Rect(0, HUD_H, max(1, w - side), h - HUD_H)
 
     def start_stage(self, index: int) -> None:
         self._reset_solver_ui()
@@ -221,6 +244,7 @@ class App:
         if fn is None:
             self.toast(f"Solver {name} chưa được tích hợp")
             return
+        self._set_panel(True)
         self.solving = name
         self.toast(f"{name}: đang giải...", 600000)
         board, start = s.board, s.state
@@ -243,6 +267,7 @@ class App:
         if self.scene != "play" or s is None or s.status != "playing" or s.state != start:
             return  # người chơi đã thoát/restart/đi tiếp: kết quả cũ, bỏ
         if err is not None:
+            self._set_panel(False)
             self.toast(f"{name} lỗi: {err}", 4000)
             return
         self.last_stats = (name, res)
@@ -394,7 +419,6 @@ class App:
         elif self.scene == "play":
             self.session.draw(surf)
             self._draw_hud(surf)
-            self._draw_metrics(surf)
             if self.paused:
                 self._draw_overlay(surf, "Paused", COLORS["text"], "", self.pause_menu)
             elif self.session.status == "won":
@@ -403,6 +427,7 @@ class App:
                 self._draw_overlay(surf, "You Win!", COLORS["win"], sub, self.end_menu)
             elif self.session.status == "lost":
                 self._draw_overlay(surf, "You Lose", COLORS["lose"], f"Moves: {self.session.moves}", self.end_menu)
+            self._draw_metrics(surf)
         if self.toast_ms > 0:
             r = draw_text(surf, self.toast_text, 20, COLORS["text"], midbottom=(w // 2, h - 24))
             pygame.draw.rect(surf, COLORS["panel"], r.inflate(28, 16), border_radius=8)
@@ -425,17 +450,17 @@ class App:
         draw_text(surf, f"Moves: {s.moves}", 20, COLORS["muted"], midleft=(r.right + 24, HUD_H // 2))
 
     def _draw_overlay(self, surf, title, color, subtitle, menu: Menu) -> None:
-        """Overlay như Paused, Win, Lose"""
         w, h = surf.get_size()
+        cx = self.board_area().centerx
         dim = pygame.Surface((w, h), pygame.SRCALPHA)
         dim.fill((10, 12, 18, 175))
         surf.blit(dim, (0, 0))
-        glow = tuple((c + 130) // 2 for c in color)  # quầng sáng hơi ngả theo màu tiêu đề
-        draw_divider(surf, w // 2, h // 2 - 190, 340)
-        draw_title(surf, title, 56, color=color, glow_color=glow, center=(w // 2, h // 2 - 130))
+        glow = tuple((c + 130) // 2 for c in color)
+        draw_divider(surf, cx, h // 2 - 190, 340)
+        draw_title(surf, title, 56, color=color, glow_color=glow, center=(cx, h // 2 - 130))
         if subtitle:
-            draw_caps(surf, subtitle, 22, COLORS["muted"], center=(w // 2, h // 2 - 78))
-        menu.draw(surf, w // 2, h // 2 - 20)
+            draw_caps(surf, subtitle, 22, COLORS["muted"], center=(cx, h // 2 - 78))
+        menu.draw(surf, cx, h // 2 - 20)
 
     def _draw_credits(self, surf: pygame.Surface) -> None:
         """Vẽ credits"""
@@ -456,35 +481,46 @@ class App:
         draw_text(surf, "Esc: back", 18, COLORS["muted"], bottomright=(w - 16, h - 12))
 
     def _draw_metrics(self, surf: pygame.Surface) -> None:
-        """Panel SEARCH METRICS góc phải, chỉ hiện khi đã có kết quả solver."""
-        if not self.last_stats:
+        """Cột SEARCH METRICS bên phải, chỉ có khi đã bấm solver."""
+        if not self.panel_on:
             return
-        name, r = self.last_stats
-        rows = [
-            ("Search time", f"{r.time * 1000:.2f} ms"),
-            ("Nodes expanded", f"{r.expanded_nodes:,}"),
-            ("Memory usage (peak)", f"{r.peak_memory / 1024:.1f} KB"),
-            ("Solution length", f"{r.solution_length} moves" if r.is_solved else "no solution"),
-        ]
-        w, pad, head, row_h = 320, 22, 50, 42
-        panel = pygame.Rect(surf.get_width() - w - 12, HUD_H + 12, w, head + len(rows) * row_h + pad)
+        s = self._panel_scale()
+        w, h = surf.get_size()
+        pw = self._panel_w()
+        col = pygame.Rect(w - pw - 2 * PANEL_MARGIN, HUD_H, pw + 2 * PANEL_MARGIN, h - HUD_H)
 
-        bg = pygame.Surface(panel.size, pygame.SRCALPHA)
-        pygame.draw.rect(bg, (*COLORS["panel"], 215), bg.get_rect(), border_radius=10)
-        surf.blit(bg, panel)
-        pygame.draw.rect(surf, COLORS["border"], panel, 1, border_radius=10)
+        bg = pygame.Surface(col.size, pygame.SRCALPHA)
+        bg.fill((*COLORS["bar"], 235))
+        surf.blit(bg, col)
+        pygame.draw.line(surf, COLORS["border"], col.topleft, col.bottomleft, 1)
 
-        pygame.draw.rect(surf, COLORS["accent"], (panel.x + pad, panel.y + 14, 3, 18))
-        draw_text(surf, f"SEARCH METRICS - {name}", 22, COLORS["text"], bold=True,
-                midleft=(panel.x + pad + 10, panel.y + 23))
+        if self.last_stats:
+            name, r = self.last_stats
+            rows = [
+                ("Search time", f"{r.time * 1000:.2f} ms"),
+                ("Nodes expanded", f"{r.expanded_nodes:,}"),
+                ("Memory (peak)", f"{r.peak_memory / 1024:.1f} KB"),
+                ("Solution length", f"{r.solution_length} moves" if r.is_solved else "no solution"),
+            ]
+        else:  # đang giải
+            name = self.solving or ""
+            rows = [(l, "...") for l in ("Search time", "Nodes expanded", "Memory (peak)", "Solution length")]
 
-        y = panel.y + head
+        x, y = col.x + PANEL_MARGIN, col.y + PANEL_MARGIN
+        pygame.draw.rect(surf, COLORS["accent"], (x, y + int(4 * s), max(2, int(3 * s)), int(18 * s)))
+        draw_text(surf, f"SEARCH METRICS - {name}", max(10, int(18 * s)), COLORS["text"], bold=True,
+                midleft=(x + int(10 * s), y + int(13 * s)))
+        y += int(46 * s)
+
+        row_h, gap = int(31 * s), int(8 * s)
         for label, value in rows:
-            row = pygame.Rect(panel.x + pad, y, w - 2 * pad, row_h - 4)
-            pygame.draw.rect(surf, (*COLORS["bar"],), row, border_radius=6)
-            draw_text(surf, label, 19, COLORS["muted"], midleft=(row.x + 10, row.centery))
-            draw_text(surf, value, 19, COLORS["text"], bold=True, midright=(row.right - 10, row.centery))
-            y += row_h
+            row = pygame.Rect(x, y, pw, row_h)
+            pygame.draw.rect(surf, COLORS["panel"], row, border_radius=int(6 * s))
+            draw_text(surf, label, max(9, int(17 * s)), COLORS["muted"],
+                    midleft=(row.x + int(10 * s), row.centery))
+            draw_text(surf, value, max(10, int(18 * s)), COLORS["text"], bold=True,
+                    midright=(row.right - int(10 * s), row.centery))
+            y += row_h + gap
 
     # --- chọn màn / Load Stage
     def _select_rects(self) -> List[pygame.Rect]:
