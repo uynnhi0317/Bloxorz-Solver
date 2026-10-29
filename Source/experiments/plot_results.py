@@ -106,15 +106,24 @@ def load_results(csv_path: Path) -> pd.DataFrame:
     return df
 
 
-def mark_common_stages(df: pd.DataFrame, solvers: Sequence[str]) -> int:
-    """Thêm cột in_common: stage mà mọi solver đều giải được. Trả về số stage chung"""
+def mark_common_stages(df: pd.DataFrame, solvers: Sequence[str]) -> Tuple[int, Dict[str, List[str]]]:
+    """Thêm cột in_common. Trả về (số stage chung, {stage: [solver không giải được]})"""
     ok = df[df["solved_ok"]]
     counts = ok.groupby(["stage_category", "stage_name"])["solver"].nunique()
     common = set(counts[counts == len(solvers)].index)
     df["in_common"] = [(c, s) in common for c, s in zip(df["stage_category"], df["stage_name"])]
+
+    dropped = {}
+    for (_, stage), g in df[~df["solved_ok"]].groupby(["stage_category", "stage_name"]):
+        dropped[stage] = sorted(g["solver"].unique())
+
+    if dropped:
+        print(f"Cảnh báo: {len(dropped)} stage bị loại khỏi tập chung:")
+        for stage, who in dropped.items():
+            print(f"    - {stage}: {', '.join(who)} không giải được")
     if not common:
         print("Warning: không có stage nào mà mọi solver đều giải được, bảng tổng hợp sẽ trống")
-    return len(common)
+    return len(common), dropped
 
 
 def ordered_categories(df: pd.DataFrame) -> List[str]:
@@ -200,8 +209,8 @@ def _status_label(row: pd.Series) -> str:
 
 
 def write_tables(df: pd.DataFrame, overall: pd.DataFrame, categories: Sequence[str],
-                 n_common: int, out_dir: Path) -> None:
-    # Bảng tổng hợp: mỗi dòng là một thuật toán, tính trên toàn bộ stage
+                 n_common: int, dropped: Dict[str, List[str]], out_dir: Path) -> None:
+    # Bảng tổng hợp: mỗi dòng là một thuật toán, tính trên stage mà các solvers đều giải được 
     overall.round(4).to_csv(out_dir / "summary_table.csv", index = False, encoding = "utf-8")
     print(f"  -> {out_dir / 'summary_table.csv'}")
 
@@ -215,6 +224,10 @@ def write_tables(df: pd.DataFrame, overall: pd.DataFrame, categories: Sequence[s
           "",
           "`Solved` = số stage giải được / tổng số stage (độ phủ trên toàn bộ stage).",
           ""]
+    if dropped:
+        md += ["Các stage bị loại khỏi tập chung (vẫn có trong bảng chi tiết):", ""]
+        md += [f"- {stage}: {', '.join(who)} không giải được" for stage, who in dropped.items()]
+        md.append("")
     header = ["Solver", "Solved", "Timeout", "Error", "Invalid", "Time (ms)", "Memory (KB)",
               "Expanded nodes", "Length", "Cost"]
     rows = []
@@ -324,7 +337,7 @@ def _grouped_bars(
 ) -> None:
     """
         Vẽ cột nhóm: mỗi nhãn trên trục x có một cột cho mỗi solver.
-        marks[(solver, idx)] = "Timeout" | "Error" | "N/A" | "–": chữ ghi ở chỗ không có cột.
+        marks[(solver, idx)] = "Timeout" | "Error" | "Invalid" | "N/A" | "–": chữ ghi ở chỗ không có cột.
     """
     n = max(len(series), 1)
     width = 0.8 / n
@@ -466,7 +479,7 @@ def _stage_tick_labels(stages: Sequence[str], fig_width: float) -> Tuple[List[st
 
 
 def plot_category_detail(df, category, solvers, colors, out_dir, dpi, show) -> None:
-    """Biểu đồ chi tiết một nhóm: mỗi stage một cụm cột, đủ 4 chỉ số"""
+    """Biểu đồ chi tiết một nhóm: mỗi stage một cụm cột, đủ 5 chỉ số"""
     sub = df[df["stage_category"] == category]
     stages = list(sub["stage_name"].drop_duplicates())
     ncols = _grid_shape()[1]
@@ -646,7 +659,7 @@ def main() -> None:
     df = load_results(args.csv)
     categories = ordered_categories(df)
     solvers = ordered_solvers(df)
-    n_common = mark_common_stages(df, solvers)
+    n_common, dropped = mark_common_stages(df, solvers)
     colors = solver_colors(solvers)
     overall = build_overall_summary(df, solvers)
 
@@ -658,7 +671,7 @@ def main() -> None:
           f"stage chung: {n_common}")
     print("Đang ghi bảng và biểu đồ:")
 
-    write_tables(df, overall, categories, n_common, tables_dir)
+    write_tables(df, overall, categories, n_common, dropped, tables_dir)
     plot_summary(overall, solvers, colors, n_common, charts_dir, args.dpi, args.show)
     for cat in categories:
         plot_category_detail(df, cat, solvers, colors, charts_dir, args.dpi, args.show)
