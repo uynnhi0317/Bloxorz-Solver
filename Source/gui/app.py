@@ -228,7 +228,8 @@ class App:
         self.btn_next = Button("Next >")
         self.replay_buttons = (self.btn_replay, self.btn_prev, self.btn_next)
         self.solve_buttons = {name: Button(name, enabled=False) for name in ("BFS", "DFS", "UCS", "A*")}
-        self.hud_buttons = [self.btn_restart, *self.solve_buttons.values()]
+        self.btn_solver = Button("Solver")
+        self.hud_buttons = [self.btn_restart, self.btn_solver]
 
         self.solving: Optional[str] = None
         self._solve_out = None          # (name, start_state, result, error)
@@ -261,7 +262,6 @@ class App:
         self._solve_out = None
         self.last_stats = None
         self.toast_ms = 0.0
-        self._set_panel(False)
 
     # ------------------------------------------------------------------ API cho T14
     def register_solver(self, name: str, fn: Solver) -> None:
@@ -305,7 +305,6 @@ class App:
         if fn is None:
             self.toast(f"Solver {name} chưa được tích hợp")
             return
-        self._set_panel(True)
         s.clear_solution()
         self.solving = name
         self.toast(f"{name}: đang giải...", 600000)
@@ -329,7 +328,6 @@ class App:
         if self.scene != "play" or s is None or s.status != "playing" or s.state != start:
             return  # người chơi đã thoát/restart/đi tiếp: kết quả cũ, bỏ
         if err is not None:
-            self._set_panel(False)
             self.toast(f"{name} lỗi: {err}", 4000)
             return
         self.last_stats = (name, res)
@@ -440,11 +438,11 @@ class App:
                 self.paused = True
             elif self.btn_restart.hit(e.pos):
                 self.restart()
-            elif self.btn_restart.hit(e.pos):
-                self.restart()
+            elif self.btn_solver.hit(e.pos):
+                self._set_panel(not self.panel_on)
             elif self._replay_click(e.pos):
                 pass
-            else:
+            elif self.panel_on:  # the solver button rects are only valid while the panel is drawn
                 for name, b in self.solve_buttons.items():
                     if b.hit(e.pos):
                         self.run_solver(name)
@@ -514,11 +512,10 @@ class App:
         """HUD trong game"""
         w = surf.get_width()
         self.btn_pause.rect = pygame.Rect(12, 10, 36, 36)
-        x = w - 12
+        x = w - 12 - (self._panel_w() + 2 * PANEL_MARGIN if self.panel_on else 0)
         for b in reversed(self.hud_buttons):
-            width = 92 if b is self.btn_restart else 64
-            x -= width
-            b.rect = pygame.Rect(x, 10, width, 36)
+            x -= 92
+            b.rect = pygame.Rect(x, 10, 92, 36)
             x -= 8
         for b in (self.btn_pause, *self.hud_buttons):
             b.draw(surf)
@@ -558,19 +555,43 @@ class App:
         draw_text(surf, "Esc: back", 18, COLORS["muted"], bottomright=(w - 16, h - 12))
 
     def _draw_metrics(self, surf: pygame.Surface) -> None:
-        """Cột SEARCH METRICS bên phải, chỉ có khi đã bấm solver."""
+        """Cột SOLVER bên phải, full chiều cao: nút solver, số liệu, điều khiển replay."""
         if not self.panel_on:
             return
         s = self._panel_scale()
         w, h = surf.get_size()
         pw = self._panel_w()
-        col = pygame.Rect(w - pw - 2 * PANEL_MARGIN, HUD_H, pw + 2 * PANEL_MARGIN, h - HUD_H)
+        col = pygame.Rect(w - pw - 2 * PANEL_MARGIN, 0, pw + 2 * PANEL_MARGIN, h)
 
         bg = pygame.Surface(col.size, pygame.SRCALPHA)
         bg.fill((*COLORS["bar"], 235))
         surf.blit(bg, col)
         pygame.draw.line(surf, COLORS["border"], col.topleft, col.bottomleft, 1)
 
+        x, y = col.x + PANEL_MARGIN, PANEL_MARGIN + int(30 * s)
+        fs_head = max(10, int(22 * s))      # font size of header
+
+        draw_divider(surf, x + pw // 2, y, pw)
+        draw_divider(surf, x + pw // 2, self._panel_scale()*h - y, pw, flip=True)
+
+        y += int(35 * s)
+
+        # --- header
+        pygame.draw.rect(surf, COLORS["accent"], (x, y, max(2, int(3 * s)), int(20 * s)))
+        draw_text(surf, "SOLVER", fs_head, COLORS["text"], bold=True,
+                midleft=(x + int(10 * s), y + int(9 * s)))
+        
+        y += int(50 * s)
+
+        # --- 4 nút solver, lưới 2x2
+        bh, g = max(28, int(38 * s)), int(8 * s)
+        half = (pw - g) // 2
+        for i, b in enumerate(self.solve_buttons.values()):
+            b.rect = pygame.Rect(x + (i % 2) * (half + g), y + (i // 2) * (bh + g), half, bh)
+            b.draw(surf)
+        y += 2 * bh + g + int(50 * s)
+
+        # --- số liệu
         if self.last_stats:
             name, r = self.last_stats
             rows = [
@@ -579,40 +600,44 @@ class App:
                 ("Memory (peak)", f"{r.peak_memory / 1024:.1f} KB"),
                 ("Solution length", f"{r.solution_length} moves" if r.is_solved else "no solution"),
             ]
-        else:  # đang giải
-            name = self.solving or ""
+        elif self.solving:
+            name = self.solving
             rows = [(l, "...") for l in ("Search time", "Nodes expanded", "Memory (peak)", "Solution length")]
+        else:
+            draw_text(surf, "Choose a solver to run", max(9, int(18 * s)), COLORS["muted"],
+                    midleft=(x, y + int(8 * s)))
+            return
 
-        x, y = col.x + PANEL_MARGIN, col.y + PANEL_MARGIN
-        pygame.draw.rect(surf, COLORS["accent"], (x, y + int(4 * s), max(2, int(3 * s)), int(18 * s)))
-        draw_text(surf, f"SEARCH METRICS - {name}", max(10, int(18 * s)), COLORS["text"], bold=True,
-                midleft=(x + int(10 * s), y + int(13 * s)))
-        y += int(46 * s)
+        pygame.draw.rect(surf, COLORS["accent"], (x, y, max(2, int(3 * s)), int(20 * s)))
+        draw_text(surf, f"SEARCH METRICS - {name}", fs_head, COLORS["text"], bold=True,
+                midleft=(x + int(10 * s), y + int(9 * s)))
+        y += int(50 * s)
 
-        row_h, gap = int(31 * s), int(8 * s)
+        row_h, gap = int(30 * s), int(12 * s)
         for label, value in rows:
             row = pygame.Rect(x, y, pw, row_h)
             pygame.draw.rect(surf, COLORS["panel"], row, border_radius=int(6 * s))
-            draw_text(surf, label, max(9, int(17 * s)), COLORS["muted"],
+            draw_text(surf, label, max(9, int(18 * s)), COLORS["accent"],
                     midleft=(row.x + int(10 * s), row.centery))
-            draw_text(surf, value, max(10, int(18 * s)), COLORS["text"], bold=True,
+            draw_text(surf, value, max(10, int(19 * s)), COLORS["text"], bold=True,
                     midright=(row.right - int(10 * s), row.centery))
             y += row_h + gap
+
+        # --- Step x / n + Pause / Prev / Next
         sess = self.session
         if sess is not None and sess.has_solution:
             n = len(sess.sol_actions)
-            y += int(10 * s)
-            draw_text(surf, f"Step {sess.sol_idx} / {n}", max(10, int(17 * s)), COLORS["accent"],
+            y += int(25 * s)
+            draw_text(surf, f"Step {sess.sol_idx} / {n}", fs_head, COLORS["accent"],
                     bold=True, midleft=(x, y + int(9 * s)))
-            y += int(24 * s)
+            y += int(40 * s)
+
             bar_h = max(4, int(6 * s))
-            pygame.draw.rect(surf, COLORS["panel"], (x, y, pw, bar_h), border_radius=bar_h // 2)
+            pygame.draw.rect(surf, COLORS["accent_dark"], (x, y, pw, bar_h), border_radius=bar_h // 2)
             pygame.draw.rect(surf, COLORS["accent"], (x, y, int(pw * sess.sol_idx / n), bar_h),
                             border_radius=bar_h // 2)
-            y += bar_h + int(14 * s)
+            y += bar_h + int(40 * s)
 
-            bh, g = max(28, int(36 * s)), int(8 * s)
-            half = (pw - g) // 2
             paused = sess.sol_paused
             self.btn_replay.label = "Resume" if paused else "Pause"
             self.btn_replay.enabled = True
