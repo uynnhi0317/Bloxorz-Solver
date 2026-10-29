@@ -466,7 +466,7 @@ class App:
             ("Memory usage (peak)", f"{r.peak_memory / 1024:.1f} KB"),
             ("Solution length", f"{r.solution_length} moves" if r.is_solved else "no solution"),
         ]
-        w, pad, head, row_h = 320, 14, 44, 36
+        w, pad, head, row_h = 320, 22, 50, 42
         panel = pygame.Rect(surf.get_width() - w - 12, HUD_H + 12, w, head + len(rows) * row_h + pad)
 
         bg = pygame.Surface(panel.size, pygame.SRCALPHA)
@@ -475,15 +475,15 @@ class App:
         pygame.draw.rect(surf, COLORS["border"], panel, 1, border_radius=10)
 
         pygame.draw.rect(surf, COLORS["accent"], (panel.x + pad, panel.y + 14, 3, 18))
-        draw_text(surf, f"SEARCH METRICS - {name}", 18, COLORS["text"], bold=True,
+        draw_text(surf, f"SEARCH METRICS - {name}", 22, COLORS["text"], bold=True,
                 midleft=(panel.x + pad + 10, panel.y + 23))
 
         y = panel.y + head
         for label, value in rows:
-            row = pygame.Rect(panel.x + pad, y, w - 2 * pad, row_h - 6)
+            row = pygame.Rect(panel.x + pad, y, w - 2 * pad, row_h - 4)
             pygame.draw.rect(surf, (*COLORS["bar"],), row, border_radius=6)
-            draw_text(surf, label, 16, COLORS["muted"], midleft=(row.x + 10, row.centery))
-            draw_text(surf, value, 18, COLORS["text"], bold=True, midright=(row.right - 10, row.centery))
+            draw_text(surf, label, 19, COLORS["muted"], midleft=(row.x + 10, row.centery))
+            draw_text(surf, value, 19, COLORS["text"], bold=True, midright=(row.right - 10, row.centery))
             y += row_h
 
     # --- chọn màn / Load Stage
