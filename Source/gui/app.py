@@ -72,7 +72,7 @@ class PlaySession:
         self.status = "playing"  # playing | won | lost
         self.anim: Optional[Animation] = None
         self.pending: Optional[Tuple[State, str]] = None
-        self.replay: Deque[Action] = deque()
+        self.replay: Deque[Action] = self.clear_solution()
         self.end_fx = None  # hiệu ứng tile còn lại sau animation cuối (vd tile fragile đã vỡ)
         self.flips.clear()
         self.renderer.prepare(self.state.bridge_mask)  # dựng sẵn ảnh sàn khử răng cưa
@@ -106,9 +106,67 @@ class PlaySession:
             self.anim, self.pending = move, (nxt, "playing")
         return True
 
-    def start_replay(self, actions: List[Action]) -> None:
-        self.replay = deque(actions)
+    def clear_solution(self) -> None:
+        self.sol_actions: Optional[List[Action]] = None
+        self.sol_states: List[State] = []   # sol_states[i] = state after i steps (0 = start)
+        self.sol_moves: List[int] = []      # move counter after i steps
+        self.sol_idx = 0
+        self.sol_paused = False
 
+    @property
+    def has_solution(self) -> bool:
+        return self.sol_actions is not None
+
+    @property
+    def replaying(self) -> bool:
+        """Replay is actively running (not paused, steps left) -> player input is locked."""
+        return self.has_solution and not self.sol_paused and self.sol_idx < len(self.sol_actions)
+
+    def start_replay(self, actions: List[Action]) -> None:
+        states, moves = [self.state], [self.moves]
+        for a in actions:
+            nxt = get_next_state(self.board, states[-1], a)
+            if nxt is None:
+                break
+            states.append(nxt)
+            moves.append(moves[-1] + int(a != Action.SWITCH_CONTROL))
+        self.clear_solution()
+        if len(states) > 1:
+            self.sol_actions = list(actions[:len(states) - 1])
+            self.sol_states, self.sol_moves = states, moves
+
+    def toggle_replay_pause(self) -> None:
+        self.sol_paused = not self.sol_paused
+
+    def step_forward(self) -> bool:
+        if (self.anim is not None or self.status != "playing" or not self.has_solution
+                or self.sol_idx >= len(self.sol_actions)):
+            return False
+        if self.try_action(self.sol_actions[self.sol_idx]):
+            self.sol_idx += 1
+            return True
+        self.clear_solution()  # solution no longer valid
+        return False
+
+    def step_back(self) -> bool:
+        if (self.anim is not None or self.status != "playing" or not self.has_solution
+                or self.sol_idx == 0):
+            return False
+        old = self.state
+        self.sol_idx -= 1
+        self.state, self.moves = self.sol_states[self.sol_idx], self.sol_moves[self.sol_idx]
+        if self.state.bridge_mask != old.bridge_mask:  # same handling as in update()
+            self.renderer.prepare(self.state.bridge_mask)
+            self.flips.start(old.bridge_mask, self.state.bridge_mask)
+        return True
+
+    def manual_action(self, action: Action) -> bool:
+        """Player input: if it goes through, we've left the solver's path."""
+        if self.try_action(action):
+            self.sol_actions = None
+            return True
+        return False
+    
     def update(self, dt_ms: float) -> None:
         self.flips.update(dt_ms)
         if self.anim is not None:
@@ -121,10 +179,9 @@ class PlaySession:
                     self.flips.start(self.state.bridge_mask, new_state.bridge_mask)
                 self.state, self.anim, self.pending = new_state, None, None
                 if self.status != "playing":
-                    self.replay.clear()
-        if self.anim is None and self.status == "playing" and self.replay:
-            if not self.try_action(self.replay.popleft()):
-                self.replay.clear()
+                    self.clear_solution()
+        if self.anim is None and self.status == "playing" and self.replaying:
+            self.step_forward()
 
     def draw(self, surface: pygame.Surface) -> None:
         self.renderer.ambient_fx = self.flips.fx()
@@ -166,6 +223,10 @@ class App:
         self.solvers: Dict[str, Solver] = {}
         self.btn_pause = Button("", icon="pause")
         self.btn_restart = Button("Restart")
+        self.btn_replay = Button("Pause")
+        self.btn_prev = Button("< Prev")
+        self.btn_next = Button("Next >")
+        self.replay_buttons = (self.btn_replay, self.btn_prev, self.btn_next)
         self.solve_buttons = {name: Button(name, enabled=False) for name in ("BFS", "DFS", "UCS", "A*")}
         self.hud_buttons = [self.btn_restart, *self.solve_buttons.values()]
 
@@ -238,13 +299,14 @@ class App:
 
     def run_solver(self, name: str) -> None:
         s = self.session
-        if s is None or s.status != "playing" or s.anim is not None or s.replay or self.solving:
+        if s is None or s.status != "playing" or s.anim is not None or s.replaying or self.solving:
             return
         fn = self.solvers.get(name)
         if fn is None:
             self.toast(f"Solver {name} chưa được tích hợp")
             return
         self._set_panel(True)
+        s.clear_solution()
         self.solving = name
         self.toast(f"{name}: đang giải...", 600000)
         board, start = s.board, s.state
@@ -275,6 +337,17 @@ class App:
             self.toast(f"{name}: không tìm thấy lời giải")
         else:
             s.start_replay(list(res.moves))
+
+    def _replay_click(self, pos) -> bool:
+        s = self.session
+        if not (self.panel_on and s.has_solution):
+            return False
+        for b, act in ((self.btn_replay, s.toggle_replay_pause),
+                    (self.btn_prev, s.step_back), (self.btn_next, s.step_forward)):
+            if b.enabled and b.hit(pos):
+                act()
+                return True
+        return False
 
     # ------------------------------------------------------------------ event
     def handle_event(self, e: pygame.event.Event) -> None:
@@ -360,13 +433,17 @@ class App:
                 self.paused = True
             elif e.key == pygame.K_r:
                 self.restart()
-            elif e.key in KEY_ACTIONS and not s.replay and not self.solving:  # đang replay lời giải thì khóa input
-                s.try_action(KEY_ACTIONS[e.key])
+            elif e.key in KEY_ACTIONS and not s.replaying and not self.solving:
+                s.manual_action(KEY_ACTIONS[e.key])
         elif e.type == pygame.MOUSEBUTTONDOWN and e.button == 1:
             if self.btn_pause.hit(e.pos):
                 self.paused = True
             elif self.btn_restart.hit(e.pos):
                 self.restart()
+            elif self.btn_restart.hit(e.pos):
+                self.restart()
+            elif self._replay_click(e.pos):
+                pass
             else:
                 for name, b in self.solve_buttons.items():
                     if b.hit(e.pos):
@@ -521,6 +598,31 @@ class App:
             draw_text(surf, value, max(10, int(18 * s)), COLORS["text"], bold=True,
                     midright=(row.right - int(10 * s), row.centery))
             y += row_h + gap
+        sess = self.session
+        if sess is not None and sess.has_solution:
+            n = len(sess.sol_actions)
+            y += int(10 * s)
+            draw_text(surf, f"Step {sess.sol_idx} / {n}", max(10, int(17 * s)), COLORS["accent"],
+                    bold=True, midleft=(x, y + int(9 * s)))
+            y += int(24 * s)
+            bar_h = max(4, int(6 * s))
+            pygame.draw.rect(surf, COLORS["panel"], (x, y, pw, bar_h), border_radius=bar_h // 2)
+            pygame.draw.rect(surf, COLORS["accent"], (x, y, int(pw * sess.sol_idx / n), bar_h),
+                            border_radius=bar_h // 2)
+            y += bar_h + int(14 * s)
+
+            bh, g = max(28, int(36 * s)), int(8 * s)
+            half = (pw - g) // 2
+            paused = sess.sol_paused
+            self.btn_replay.label = "Resume" if paused else "Pause"
+            self.btn_replay.enabled = True
+            self.btn_prev.enabled = paused and sess.sol_idx > 0
+            self.btn_next.enabled = paused and sess.sol_idx < n
+            self.btn_replay.rect = pygame.Rect(x, y, pw, bh)
+            self.btn_prev.rect = pygame.Rect(x, y + bh + g, half, bh)
+            self.btn_next.rect = pygame.Rect(x + half + g, y + bh + g, half, bh)
+            for b in self.replay_buttons:
+                b.draw(surf)
 
     # --- chọn màn / Load Stage
     def _select_rects(self) -> List[pygame.Rect]:
