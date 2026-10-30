@@ -1,19 +1,63 @@
+"""Script chạy benchmark cho các Bloxorz Solver.
+
+Có hai chế độ chạy:
+- Có timeout (mặc định 60 giây mỗi lần chạy): mỗi cặp solver/stage nằm trong một tiến trình con,
+  quá giờ thì bị dừng và ghi nhận status = "timeout".
+- Không timeout: đặt timeout = 0 hoặc None, khi đó solver chạy thẳng trong tiến trình chính,
+  không giới hạn thời gian.
+
+Mỗi cặp (solver, stage) được chạy lặp `repeat` lần: thời gian lấy trung vị, bộ nhớ lấy đỉnh lớn nhất.
+
+Cách chạy (từ thư mục Source/):
+    python -m experiments.run_benchmark
+    python -m experiments.run_benchmark --timeout 20 --repeat 5
+
+Kết quả được ghi vào experiments/results/benchmark/benchmark_results.csv
+"""
+
+import argparse
 import csv
-from dataclasses import dataclass
+import importlib
+import multiprocessing as mp
+import queue
+import statistics
+from dataclasses import asdict, dataclass
 from pathlib import Path
-from typing import Iterable, List, Optional, Sequence
+from typing import Callable, Iterable, List, Optional, Sequence
 
 from game.board import Board
 from game.stage_loader import StageSource, load_stage
 from solvers.base import BaseSolver, SolveResult
+from solvers.ucs import solution_cost
 
 SOURCE_DIR = Path(__file__).resolve().parent.parent
 DEFAULT_STAGES_DIR = SOURCE_DIR / "stages"
-DEFAULT_RESULTS_CSV = SOURCE_DIR / "experiments" / "results" / "benchmark_results.csv"
+DEFAULT_RESULTS_CSV = SOURCE_DIR / "experiments" / "results" / "benchmark" / "benchmark_results.csv"
+
+# Thời gian tối đa (giây) cho mỗi lần chạy (solver, stage); 0 hoặc None --> không giới hạn
+DEFAULT_TIMEOUT = 60
+
+# Số lần chạy lặp mỗi cặp (solver, stage) để giảm nhiễu khi đo thời gian
+DEFAULT_REPEAT = 5
 
 # Thứ tự các nhóm màn chơi theo độ khó tăng dần
 STAGE_CATEGORIES = ("simple", "fragile", "switch", "combined")
 
+CSV_FIELDNAMES = [
+    "stage_category",
+    "stage_name",
+    "solver",
+    "is_solved",
+    "is_valid",
+    "status",
+    "solution_length",
+    "solution_cost",
+    "expanded_nodes",
+    "time_sec",
+    "time_ms",
+    "peak_memory_bytes",
+    "peak_memory_kb",
+]
 
 @dataclass(frozen = True, slots = True)
 class BenchmarkRecord:
@@ -29,6 +73,8 @@ class BenchmarkRecord:
     time_sec: float
     peak_memory_bytes: int
     is_valid: Optional[bool] = None
+    status: str = "ok"  # ok | timeout | error
+    solution_cost: int = 0  # tổng chi phí theo move_cost
 
     @property
     def time_ms(self) -> float:
@@ -43,25 +89,43 @@ class BenchmarkRecord:
 
 def measure_single(
     solver: BaseSolver,
-    stage: StageSource,
+    board: Board,
     category: str = "custom",
     verify: bool = True,
+    repeat: int = 1,
+    on_run: Optional[Callable[[], None]] = None,
 ) -> BenchmarkRecord:
     """
         Hàm đo hiệu năng chung của 1 thuật toán (solver) trên 1 màn chơi.
         + solver: thuật toán cần đo (kế thừa từ BaseSolver)
-        + stage: đối tượng Board, đường dẫn file JSON, chuỗi JSON hoặc dict
+        + board: màn chơi đã nạp (Board)
         + category: nhóm độ khó của màn chơi (simple, fragile, switch, combined)
         + verify: tự động kiểm tra tính hợp lệ của lời giải nếu tìm thấy
+        + repeat: số lần chạy lặp; thời gian lấy trung vị, bộ nhớ lấy đỉnh lớn nhất
+        + on_run: hàm gọi sau mỗi lần chạy xong (dùng để báo tiến độ cho tiến trình cha)
     """
-    board = stage if isinstance(stage, Board) else load_stage(stage)
-    result: SolveResult = solver.solve(board)
+    runs: List[SolveResult] = []
+    for _ in range(max(repeat, 1)):
+        runs.append(solver.solve(board))
+        if on_run is not None:
+            on_run()
+    result = runs[0]  # moves và expanded_nodes là tất định giữa các lần chạy
+    time_sec = statistics.median(r.time for r in runs)
+    peak_memory = max(r.peak_memory for r in runs)
 
     is_valid: Optional[bool] = None
     if verify and result.is_solved and result.moves is not None:
         is_valid = BaseSolver.verify_solution(board, result.moves)
         if not is_valid:
             print(f"Warning: Lời giải của {solver.name} trên màn '{board.name}' không hợp lệ!")
+
+    # Chi phí lời giải theo move_cost; lời giải sai thì không tính được
+    cost = 0
+    if result.is_solved and result.moves is not None and is_valid is not False:
+        try:
+            cost = solution_cost(board, result.moves)
+        except ValueError:
+            cost = 0
 
     return BenchmarkRecord(
         stage_category = category,
@@ -70,11 +134,78 @@ def measure_single(
         is_solved = result.is_solved,
         solution_length = result.solution_length,
         expanded_nodes = result.expanded_nodes,
-        time_sec = result.time,
-        peak_memory_bytes = result.peak_memory,
+        time_sec = time_sec,
+        peak_memory_bytes = peak_memory,
         is_valid = is_valid,
+        solution_cost = cost,
     )
 
+def _child(solver: BaseSolver, board: Board, category: str, verify: bool, repeat: int, out) -> None:
+    """
+    Chạy trong tiến trình con: mỗi lần chạy xong gửi ("run", None) vào queue,
+    đo xong toàn bộ thì gửi ("ok", record dạng dict)
+    """
+    try:
+        record = measure_single(solver, board, category, verify, repeat,
+                                on_run = lambda: out.put(("run", None)))
+        out.put(("ok", asdict(record)))
+    except BaseException as exc:
+        out.put(("error", f"{type(exc).__name__}: {exc}"))
+
+def measure_with_timeout(
+        solver: BaseSolver,
+        board: Board,
+        category: str,
+        verify: bool,
+        timeout: float,
+        stage_name: str,
+        repeat: int = 1,
+) -> BenchmarkRecord:
+    """
+        Tương tự như measure_single() nhưng chạy trong tiến trình con và bị giết nếu quá timeout
+        Timeout áp dụng riêng cho từng lần chạy: lần nào quá timeout thì dừng ngay
+        Quá giờ hoặc lỗi --> trả về record có is_solved=False và status="timeout"/"error"
+    """
+    ctx = mp.get_context("spawn")
+    q = ctx.Queue()
+    proc = ctx.Process(target = _child, args = (solver, board, category, verify, repeat, q), daemon = True)
+    proc.start()
+
+    try:
+        # Mỗi lần chờ chỉ tối đa timeout giây cho đúng 1 lần chạy
+        for _ in range(max(repeat, 1)):
+            kind, payload = q.get(timeout = timeout)
+            if kind != "run":  # lỗi giữa chừng
+                break
+        else:
+            # Đủ số lần chạy, chờ record cuối 
+            kind, payload = q.get(timeout = timeout)
+    except queue.Empty:
+        kind, payload = ("timeout", None) if proc.is_alive() else ("error", "tiến trình con thoát bất thường")
+    finally:
+        if proc.is_alive():
+            proc.terminate()
+        proc.join(timeout = 5)
+
+    # isinstance để chắc chắn payload là dict trước khi unpack
+    if kind == "ok" and isinstance(payload, dict):
+        return BenchmarkRecord(**payload)
+    if kind == "ok":
+        kind, payload = "error", f"kết quả không hợp lệ: {payload!r}"
+    if kind == "error":
+        print(f"Warning: {solver.name} trên '{stage_name}' bị lỗi: {payload}")
+    return BenchmarkRecord(
+        stage_category = category,
+        stage_name = stage_name,
+        solver_name = solver.name,
+        is_solved = False,
+        solution_length = 0,
+        expanded_nodes = 0,
+        time_sec = timeout if kind == "timeout" else 0.0,
+        peak_memory_bytes = 0,
+        is_valid = None,
+        status = kind,
+    )
 
 def discover_stages(stages_dir: Path = DEFAULT_STAGES_DIR) -> List[tuple[str, Path]]:
     """
@@ -100,93 +231,142 @@ def discover_stages(stages_dir: Path = DEFAULT_STAGES_DIR) -> List[tuple[str, Pa
 
     return found_stages
 
+def _record_to_row(rec: BenchmarkRecord) -> dict:
+    """Chuyển 1 BenchmarkRecord thành 1 dòng CSV"""
+    return {
+        "stage_category": rec.stage_category,
+        "stage_name": rec.stage_name,
+        "solver": rec.solver_name,
+        "is_solved": rec.is_solved,
+        "is_valid": "" if rec.is_valid is None else rec.is_valid,
+        "status": rec.status,
+        "solution_length": rec.solution_length,
+        "solution_cost": rec.solution_cost,
+        "expanded_nodes": rec.expanded_nodes,
+        "time_sec": f"{rec.time_sec:.6f}",
+        "time_ms": f"{rec.time_ms:.3f}",
+        "peak_memory_bytes": rec.peak_memory_bytes,
+        "peak_memory_kb": f"{rec.peak_memory_kb:.2f}",
+    }
+
 
 def run_benchmarks(
     solvers: Sequence[BaseSolver],
     stages: Optional[Iterable[tuple[str, StageSource]]] = None,
     verify: bool = True,
+    timeout: Optional[float] = DEFAULT_TIMEOUT,
+    csv_path: Optional[Path] = None,
+    repeat: int = DEFAULT_REPEAT,
 ) -> List[BenchmarkRecord]:
     """
         Chạy toàn bộ danh sách solvers qua toàn bộ danh sách stages.
         + solvers: danh sách các thuật toán [BFSSolver(), DFSSolver(), UCSSolver(), AStarSolver()]
         + stages: danh sách các cặp (category, stage_source). Nếu để None sẽ tự quét thư mục stages/
+        + csv_path: nếu có, mỗi kết quả được ghi và flush ngay vào CSV
+        + repeat: số lần chạy lặp mỗi cặp (solver, stage)
     """
     if stages is None:
         stages = discover_stages()
 
     records: List[BenchmarkRecord] = []
-    for category, stage_source in stages:
-        board = stage_source if isinstance(stage_source, Board) else load_stage(stage_source)
-        for solver in solvers:
-            record = measure_single(solver, board, category = category, verify = verify)
-            records.append(record)
-            print(
-                f"[{category}/{board.name}] {solver.name:<6} | "
-                f"Solved: {str(record.is_solved):<5} | "
-                f"Valid: {str(record.is_valid):<5} | "
-                f"Len: {record.solution_length:<4} | "
-                f"Nodes: {record.expanded_nodes:<7} | "
-                f"Time: {record.time_ms:>8.2f} ms | "
-                f"Mem: {record.peak_memory_kb:>8.2f} KB"
-            )
+    csv_file = None
+    writer = None
+    if csv_path is not None:
+        csv_path.parent.mkdir(parents = True, exist_ok = True)
+        csv_file = csv_path.open("w", newline = "", encoding = "utf-8")
+        writer = csv.DictWriter(csv_file, fieldnames = CSV_FIELDNAMES)
+        writer.writeheader()
+        csv_file.flush()
+
+    try:
+        for category, stage_source in stages:
+            # Một stage lỗi thì bỏ qua, không dừng cả lượt benchmark
+            try:
+                board = stage_source if isinstance(stage_source, Board) else load_stage(stage_source)
+            except (OSError, ValueError, KeyError, TypeError) as exc:
+                print(f"[bỏ qua] stage {stage_source}: {type(exc).__name__}: {exc}")
+                continue
+
+            for solver in solvers:
+                if timeout:
+                    record = measure_with_timeout(solver, board, category, verify, timeout, board.name, repeat)
+                else:
+                    record = measure_single(solver, board, category, verify, repeat)
+
+                records.append(record)
+                if writer is not None and csv_file is not None:
+                    writer.writerow(_record_to_row(record))
+                    csv_file.flush()
+
+                print(
+                    f"[{record.stage_category}/{record.stage_name}] {record.solver_name:<14} | "
+                    f"{record.status:<7} | "
+                    f"Solved: {str(record.is_solved):<5} | "
+                    f"Valid: {str(record.is_valid):<5} | "
+                    f"Len: {record.solution_length:<4} | "
+                    f"Cost: {record.solution_cost:<4} | "
+                    f"Nodes: {record.expanded_nodes:<7} | "
+                    f"Time: {record.time_ms:>8.2f} ms | "
+                    f"Mem: {record.peak_memory_kb:>8.2f} KB"
+                )
+    finally:
+        if csv_file is not None:
+            csv_file.close()
 
     return records
 
-
-def save_results_to_csv(
-    records: Iterable[BenchmarkRecord],
-    output_path: Path = DEFAULT_RESULTS_CSV,
-) -> None:
+def build_solvers() -> List[BaseSolver]:
     """
-        Xuất danh sách kết quả đo hiệu năng ra file CSV.
+        Đăng ký các solver sẽ chạy benchmark. Solver nào chưa cài đặt thì bỏ qua và báo.
+        Thêm solver mới: thêm một dòng _add(...) bên dưới.
     """
-    output_path.parent.mkdir(parents = True, exist_ok = True)
+    solvers: List[BaseSolver] = []
 
-    fieldnames = [
-        "stage_category",
-        "stage_name",
-        "solver",
-        "is_solved",
-        "is_valid",
-        "solution_length",
-        "expanded_nodes",
-        "time_sec",
-        "time_ms",
-        "peak_memory_bytes",
-        "peak_memory_kb",
-    ]
+    def _add(module: str, cls: str) -> None:
+        try:
+            solvers.append(getattr(importlib.import_module(module), cls)())
+        except (ImportError, AttributeError) as exc:
+            print(f"[bỏ qua] {cls}: chưa dùng được ({type(exc).__name__}: {exc})")
 
-    with output_path.open("w", newline = "", encoding = "utf-8") as csv_file:
-        writer = csv.DictWriter(csv_file, fieldnames = fieldnames)
-        writer.writeheader()
-        for rec in records:
-            writer.writerow({
-                "stage_category": rec.stage_category,
-                "stage_name": rec.stage_name,
-                "solver": rec.solver_name,
-                "is_solved": rec.is_solved,
-                "is_valid": rec.is_valid,
-                "solution_length": rec.solution_length,
-                "expanded_nodes": rec.expanded_nodes,
-                "time_sec": f"{rec.time_sec:.6f}",
-                "time_ms": f"{rec.time_ms:.3f}",
-                "peak_memory_bytes": rec.peak_memory_bytes,
-                "peak_memory_kb": f"{rec.peak_memory_kb:.2f}",
-            })
+    _add("solvers.bfs", "BFSSolver")
+    _add("solvers.dfs", "DFSSolver")
+    _add("solvers.ucs", "UCSSolver")
+
+    # add A*: chạy 3 heuristic để so sánh; đặt name riêng để CSV phân biệt được các dòng
+    try:
+        from solvers.astar import AStarSolver
+        from solvers import heuristics as hs
+        for label, factory in (("A* point", hs.point_object_heuristic),
+                               ("A* manhattan", hs.manhattan_heuristic),
+                               ("A* orient", hs.orientation_heuristic)):
+            solver = AStarSolver(factory)
+            solver.name = label
+            solvers.append(solver)
+    except (ImportError, AttributeError) as exc:
+        print(f"[bỏ qua] AStarSolver: chưa dùng được ({type(exc).__name__}: {exc})")
+
+    return solvers
 
 
 def main() -> None:
-    """Điểm khởi chạy khi gọi: python -m experiments.run_benchmark"""
-    solvers: List[BaseSolver] = []
+    parser = argparse.ArgumentParser(description = "Benchmark các solver Bloxorz")
+    parser.add_argument("--timeout", type = float, default = DEFAULT_TIMEOUT,
+                        help = "giây tối đa cho mỗi lần chạy (solver, stage); 0 = không giới hạn")
+    parser.add_argument("--repeat", type = int, default = DEFAULT_REPEAT,
+                        help = "số lần chạy lặp mỗi cặp (solver, stage); thời gian lấy trung vị")
+    parser.add_argument("--csv", type = Path, default = DEFAULT_RESULTS_CSV,
+                        help = "file CSV kết quả")
+    args = parser.parse_args()
+
+    solvers = build_solvers()
 
     if not solvers:
-        print("Chưa có solver nào được đăng ký trong danh sách chạy benchmark.")
+        print("Chưa có solver nào dùng được để chạy benchmark.")
         return
 
-    records = run_benchmarks(solvers)
+    records = run_benchmarks(solvers, timeout = args.timeout, csv_path = args.csv, repeat = args.repeat)
     if records:
-        save_results_to_csv(records)
-        print(f"\nĐã lưu kết quả benchmark tại: {DEFAULT_RESULTS_CSV}")
+        print(f"\nĐã lưu kết quả benchmark tại: {args.csv}")
 
 
 if __name__ == "__main__":
