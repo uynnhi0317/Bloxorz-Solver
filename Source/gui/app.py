@@ -1,7 +1,7 @@
 """app.py - Vòng lặp chính: menu game, chọn màn, credits, chơi màn (HUD, pause, thắng/thua).
 
 Cách T14 gắn solver vào:
-    app.register_solver("BFS", fn)   # fn(board, state) -> Optional[List[Action]]
+    app.register_solver("BFS", fn)   # fn(board, state) -> Optional[List[Move]]
 Nút Solve tương ứng tự bật; kết quả được replay bằng animation. Số liệu (time, memory...)
 do T14 tự hiển thị / lưu.
 """
@@ -15,9 +15,9 @@ import threading
 
 import pygame
 
-from game import Action, Board, State, get_next_state, is_goal, load_stage
-from .animations import (Animation, BridgeFlips, Sequence as AnimSequence, animate_fall, animate_intro, animate_move,
-                         animate_outro, animate_win, is_bump)
+from game import Action, Board, Coord, Move, State, get_next_state, is_goal, load_stage
+from .animations import (Animation, BridgeFlips, DIR_DELTA, Sequence as AnimSequence, animate_fall,
+                         animate_intro, animate_move, animate_outro, animate_win, is_bump)
 from .controls import COLORS, KEY_ACTIONS, Button, Menu, draw_caps, draw_divider, draw_text, draw_title
 from .theme import Background
 from .renderer import Renderer
@@ -68,6 +68,8 @@ class PlaySession:
 
     def reset(self) -> None:
         self.state: State = self.board.initial_state
+        self.selected: Optional[Coord] = None
+        self.renderer.selected = None
         self.moves = 0
         self.status = "playing"  # playing | won | lost
         self.anim: Optional[Animation] = None
@@ -77,38 +79,65 @@ class PlaySession:
         self.flips.clear()
         self.renderer.prepare(self.state.bridge_mask)  # dựng sẵn ảnh sàn khử răng cưa
         self.by_solver = False  # flag, is the finishing move by solver?
+        
 
     def start_intro(self) -> None:
         """Vào màn / restart: tile bay lên, khối rơi xuống; input bị khóa tới khi xong."""
         self.anim, self.pending = animate_intro(self.renderer, self.state), (self.state, "playing")
 
-    def try_action(self, action: Action, by_solver: bool = False) -> bool:
+    def try_action(self, move: Move, by_solver: bool = False) -> bool:
         if self.anim is not None or self.status != "playing":
             return False
         self.by_solver = by_solver
-        nxt = get_next_state(self.board, self.state, action)
-        if action == Action.SWITCH_CONTROL:  # chỉ đổi cube active, không tính bước
-            if nxt is None:
-                return False
-            self.state = nxt
-            return True
+        nxt = get_next_state(self.board, self.state, move)
         if nxt is None:
-            if is_bump(self.state, action):  # cube đâm vào cube kia: bị chặn, không phải thua
+            if is_bump(self.state, move):    # cube hit its twin: blocked, not a loss
                 return False
-            self.anim = animate_fall(self.renderer, self.state, action)
+            self.anim = animate_fall(self.renderer, self.state, move.action,
+                                    self._cube_index(move.cube))
             self.pending = (self.state, "lost")
             return True
         self.moves += 1
-        move = animate_move(self.renderer, self.state, action, nxt)
+        roll = animate_move(self.renderer, self.state, move, nxt)
+        self._sync_selected(nxt, move)       # AFTER building the animation, which captures colours
         if is_goal(self.board, nxt):
-            parts = [move, animate_win(self.renderer, nxt)]
-            if not by_solver:                      # outro only when the player finished
+            parts = [roll, animate_win(self.renderer, nxt)]
+            if not by_solver:
                 parts.append(animate_outro(self.renderer, nxt))
             self.anim = AnimSequence(*parts)
             self.pending = (nxt, "won")
         else:
-            self.anim, self.pending = move, (nxt, "playing")
+            self.anim, self.pending = roll, (nxt, "playing")
         return True
+
+    def _set_selected(self, cell: Optional[Coord]) -> None:
+        self.selected = cell
+        self.renderer.selected = cell
+
+    def _active_cube(self) -> Optional[Coord]:
+        sp = self.state.split_positions
+        if sp is None:
+            return None
+        return self.selected if self.selected in sp else sp[0]
+
+    def _cube_index(self, cube: Optional[Coord]) -> int:
+        sp = self.state.split_positions
+        return sp.index(cube) if sp is not None and cube in sp else 0
+
+    def toggle_cube(self) -> None:
+        """UI only: swap the controlled cube. No move, no state change."""
+        if self.anim is None and self.status == "playing" and self.state.split_positions is not None:
+            a, b = self.state.split_positions
+            self._set_selected(b if self._active_cube() == a else a)
+
+    def _sync_selected(self, nxt: State, move: Move) -> None:
+        if nxt.split_positions is None:      # whole block, or just merged
+            self._set_selected(None)
+        elif move.cube is None:              # just split on a switch
+            self._set_selected(nxt.split_positions[0])
+        else:                                # follow the cube that moved
+            dr, dc = DIR_DELTA[move.action]
+            self._set_selected((move.cube[0] + dr, move.cube[1] + dc))
 
     def clear_solution(self) -> None:
         self.sol_actions: Optional[List[Action]] = None
@@ -133,7 +162,7 @@ class PlaySession:
             if nxt is None:
                 break
             states.append(nxt)
-            moves.append(moves[-1] + int(a != Action.SWITCH_CONTROL))
+            moves.append(moves[-1] + 1)
         self.clear_solution()
         if len(states) > 1:
             self.sol_actions = list(actions[:len(states) - 1])
@@ -159,6 +188,8 @@ class PlaySession:
         old = self.state
         self.sol_idx -= 1
         self.state, self.moves = self.sol_states[self.sol_idx], self.sol_moves[self.sol_idx]
+        mv = self.sol_actions[self.sol_idx]      # the move we just undid
+        self._set_selected(mv.cube if self.state.split_positions is not None else None)
         if self.state.bridge_mask != old.bridge_mask:  # same handling as in update()
             self.renderer.prepare(self.state.bridge_mask)
             self.flips.start(old.bridge_mask, self.state.bridge_mask)
@@ -166,7 +197,7 @@ class PlaySession:
 
     def manual_action(self, action: Action) -> bool:
         """Player input: if it goes through, we've left the solver's path."""
-        if self.try_action(action):
+        if self.try_action(Move(action=action, cube=self._active_cube())):
             self.sol_actions = None
             return True
         return False
@@ -477,6 +508,9 @@ class App:
                 self.paused = True
             elif e.key == pygame.K_r:
                 self.restart()
+            elif e.key == pygame.K_SPACE:
+                if not s.replaying and not self.solving:
+                    s.toggle_cube()
             elif e.key in KEY_ACTIONS and not s.replaying and not self.solving:
                 s.manual_action(KEY_ACTIONS[e.key])
         elif e.type == pygame.MOUSEBUTTONDOWN and e.button == 1:

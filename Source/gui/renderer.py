@@ -203,6 +203,7 @@ class Renderer:
         # Hiệu ứng tile "nền" được trộn vào mọi lần vẽ (vd cầu đang lật chạy song song với
         # nước đi tiếp theo, không chặn input). fx truyền vào draw_scene ưu tiên hơn.
         self.ambient_fx: Dict[Coord, TileFx] = {}
+        self.selected: Optional[Coord] = None  # cube đang điều khiển khi block tách (trạng thái UI)
         self._cache: Dict[tuple, list] = {}  # tile tĩnh -> danh sách lệnh vẽ đã chiếu sẵn
         self._layers: Dict[int, pygame.Surface] = {}  # bridge_mask -> ảnh sàn tĩnh đã khử răng cưa + glow
         self._ss = 1  # hệ số supersample hiện hành (1 = vẽ thẳng)
@@ -288,13 +289,13 @@ class Renderer:
     # ------------------------------------------------------------ public API
     def state_boxes(self, state: State) -> List[Box]:
         """Dựng các khối rắn cho mỗi trạng thái.
-        - Đang tách: 2 cube 1x1x1, cube đang được điều khiển (state.selected_cube) có màu active.
+        - Đang tách: 2 cube 1x1x1, cube đang được điều khiển (self.selected) có màu active.
         - Nguyên khối: 1 box 1x1x2 theo orientation.
         """
         if state.split_positions is not None:
             return [
                 Box(make_box(r, c, 0, 1, 1, 1),
-                    PALETTE["cube_active"] if (r, c) == state.selected_cube else PALETTE["cube_idle"])
+                    PALETTE["cube_active"] if (r, c) == self.selected else PALETTE["cube_idle"])
                 for r, c in state.split_positions
             ]
         dims = {Orientation.STANDING: (1, 1, 2),

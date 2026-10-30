@@ -3,7 +3,7 @@ from itertools import count
 from typing import Dict, Optional, Sequence, Tuple
 
 from game.board import Board
-from game.rules import Action, get_successors, is_goal
+from game.rules import Move, get_successors, is_goal
 from game.state import State
 from solvers.base import BaseSolver, CameFrom
 from solvers.heuristics import HeuristicFactory, point_object_heuristic
@@ -20,9 +20,7 @@ class AStarSolver(BaseSolver):
     ) -> None:
         self.heuristic = heuristic
 
-    def _search(
-        self, board: Board
-    ) -> Tuple[Optional[Sequence[Action]], int]:
+    def _search(self, board: Board) -> Tuple[Optional[Sequence[Move]], int]:
         h = self.heuristic(board)  # Tiền xử lý một lần cho mỗi board
         start = board.initial_state
         came_from: CameFrom = {start: (None, None)}
@@ -43,11 +41,11 @@ class AStarSolver(BaseSolver):
                 return self.reconstruct_path(came_from, state), expanded
             expanded += 1
 
-            for action, child in get_successors(board, state):
-                new_cost = cost + move_cost(board, state, action, child)
+            for move, child in get_successors(board, state):
+                new_cost = cost + move_cost(board, state, child)
                 if child not in best_cost or new_cost < best_cost[child]:
                     best_cost[child] = new_cost
-                    came_from[child] = (state, action)
+                    came_from[child] = (state, move)
                     h_child = h(child)
                     heapq.heappush(frontier, (new_cost + h_child, h_child,
                                               next(tie), new_cost, child))

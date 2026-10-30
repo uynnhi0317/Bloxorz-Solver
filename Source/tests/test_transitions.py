@@ -1,8 +1,8 @@
 import pytest
 
-from game import (Action, Board, Orientation, State, Tile, TileType,
+from game import (Action, Board, Move, Orientation, State, Tile, TileType,
                   get_next_state, get_successors, is_goal)
-from game.rules import ACTIONS, MOVE_ACTIONS, is_supported, roll
+from game.rules import MOVE_ACTIONS, is_supported, roll
 
 SYMBOLS = {".": TileType.FLOOR, "#": TileType.VOID, "G": TileType.GOAL}
 
@@ -102,14 +102,14 @@ class TestGetNextState:
 class TestGetSuccessors:
     def test_open_board_has_all_move_actions(self, open_board):
         successors = get_successors(open_board, State(2, 2))
-        assert [action for action, _ in successors] == list(MOVE_ACTIONS)
+        assert [move for move, _ in successors] == [Move(a) for a in MOVE_ACTIONS]
 
     def test_small_board_filters_invalid_moves(self):
         # Board 2x2: đứng thì mọi hướng đều cần 2 ô nên không có nước đi
         board = _make_board(["G.", ".."], start=(0, 0))
         assert get_successors(board, State(0, 0)) == ()
         assert get_successors(board, State(0, 0, Orientation.HORIZONTAL)) == (
-            (Action.MOVE_DOWN, State(1, 0, Orientation.HORIZONTAL)),
+            (Move(Action.MOVE_DOWN), State(1, 0, Orientation.HORIZONTAL)),
         )
 
 # Điều kiện thắng: chỉ thắng khi block nguyên vẹn đứng thẳng trên goal.
@@ -153,9 +153,8 @@ class TestState:
 
     @pytest.mark.parametrize("a, b", [
         (State(1, 1, bridge_mask=0), State(1, 1, bridge_mask=1)),
-        (State(0, 0, split_positions=((1, 1), (3, 3)), selected_cube=(1, 1)),
-         State(0, 0, split_positions=((1, 1), (3, 3)), selected_cube=(3, 3))),
-    ], ids=["bridge_mask", "selected_cube"])
+        (State.split((1, 1), (3, 3)), State.split((1, 1), (3, 4))),
+    ], ids=["bridge_mask", "split_positions"])
     def test_states_differing_in_one_field_are_distinct(self, a, b):
         # Solver dùng State làm key của visited
         assert a != b
@@ -179,36 +178,21 @@ class TestState:
         with pytest.raises(ValueError, match="cùng 1 ô"):
             State.split((2, 2), (2, 2))
 
-    def test_split_selects_first_cube_by_default(self):
-        assert State.split((3, 3), (1, 1)).selected_cube == (1, 1)
-
-    def test_selected_cube_must_be_one_of_cubes(self):
-        with pytest.raises(ValueError, match="một trong hai"):
-            State(0, 0, split_positions=((1, 1), (3, 3)), selected_cube=(2, 2))
-
-    def test_selected_cube_requires_split(self):
-        with pytest.raises(ValueError, match="chỉ hợp lệ khi State đang split"):
-            State(1, 1, selected_cube=(1, 1))
-
-    def test_switch_control_on_whole_block_returns_self(self):
-        state = State(2, 2, Orientation.HORIZONTAL)
-        assert state.switch_control() == state
-
 # Block đã tách: di chuyển từng cube, đổi điều khiển, tự ghép khi kề nhau
 class TestSplitBlock:
-    def test_switch_control_requires_split(self, open_board):
-        assert get_next_state(open_board, State(2, 2), Action.SWITCH_CONTROL) is None
-
-    def test_switch_control_alternates_selected_cube(self, open_board):
+    def test_move_of_cube_not_in_state_returns_none(self, open_board):
         state = State.split((1, 1), (3, 3))
-        switched = get_next_state(open_board, state, Action.SWITCH_CONTROL)
-        assert switched.split_positions == state.split_positions
-        assert switched.selected_cube == (3, 3)
-        assert get_next_state(open_board, switched, Action.SWITCH_CONTROL) == state
+        assert get_next_state(open_board, state, Move(Action.MOVE_LEFT, (2, 2))) is None
 
-    def test_successors_include_switch_control(self, open_board):
-        successors = get_successors(open_board, State.split((1, 1), (3, 3)))
-        assert [action for action, _ in successors] == list(ACTIONS)
+    def test_bare_action_on_split_state_returns_none(self, open_board):
+        # Block đã tách bắt buộc phải nói rõ cube nào di chuyển
+        assert get_next_state(open_board, State.split((1, 1), (3, 3)), Action.MOVE_LEFT) is None
+
+    def test_successors_try_both_cubes(self, open_board):
+        state = State.split((1, 1), (3, 3))
+        successors = get_successors(open_board, state)
+        assert [move for move, _ in successors] == [
+            Move(action, cube) for cube in state.split_positions for action in MOVE_ACTIONS]
 
     @pytest.mark.parametrize("action, target", [
         (Action.MOVE_UP, (0, 1)),
@@ -216,33 +200,31 @@ class TestSplitBlock:
         (Action.MOVE_LEFT, (1, 0)),
         (Action.MOVE_RIGHT, (1, 2)),
     ], ids=["up", "down", "left", "right"])
-    def test_moves_only_selected_cube_one_cell(self, open_board, action, target):
-        # Cube (1,1) đang điều khiển đi 1 ô, cube (3,3) đứng yên
-        next_state = get_next_state(open_board, State.split((1, 1), (3, 3)), action)
-        assert next_state == State(0, 0, split_positions=(target, (3, 3)), selected_cube=target)
+    def test_moves_only_given_cube_one_cell(self, open_board, action, target):
+        # Cube (1,1) đi 1 ô, cube (3,3) đứng yên
+        next_state = get_next_state(open_board, State.split((1, 1), (3, 3)), Move(action, (1, 1)))
+        assert next_state == State.split(target, (3, 3))
 
-    def test_moves_second_cube_after_switching_control(self, open_board):
-        state = State(0, 0, split_positions=((1, 1), (3, 3)), selected_cube=(3, 3))
-        next_state = get_next_state(open_board, state, Action.MOVE_LEFT)
+    def test_moves_second_cube(self, open_board):
+        next_state = get_next_state(open_board, State.split((1, 1), (3, 3)), Move(Action.MOVE_LEFT, (3, 3)))
         assert next_state.split_positions == ((1, 1), (3, 2))
-        assert next_state.selected_cube == (3, 2)
 
     def test_cube_off_board_returns_none(self, open_board):
-        state = State(0, 0, split_positions=((0, 4), (4, 0)), selected_cube=(0, 4))
-        assert get_next_state(open_board, state, Action.MOVE_UP) is None
+        state = State.split((0, 4), (4, 0))
+        assert get_next_state(open_board, state, Move(Action.MOVE_UP, (0, 4))) is None
 
     def test_cube_into_other_cube_returns_none(self, open_board):
         # Trạng thái dựng tay: 2 cube kề nhau nhưng chưa ghép
         state = State.split((1, 1), (1, 2))
-        assert get_next_state(open_board, state, Action.MOVE_RIGHT) is None
+        assert get_next_state(open_board, state, Move(Action.MOVE_RIGHT, (1, 1))) is None
 
-    @pytest.mark.parametrize("state, action, merged", [
-        (State.split((1, 1), (1, 3), bridge_mask=0b1), Action.MOVE_RIGHT,
+    @pytest.mark.parametrize("state, move, merged", [
+        (State.split((1, 1), (1, 3), bridge_mask=0b1), Move(Action.MOVE_RIGHT, (1, 1)),
          State(1, 2, Orientation.HORIZONTAL, bridge_mask=0b1)),
-        (State(0, 0, split_positions=((1, 0), (1, 2)), selected_cube=(1, 2)), Action.MOVE_LEFT,
+        (State.split((1, 0), (1, 2)), Move(Action.MOVE_LEFT, (1, 2)),
          State(1, 0, Orientation.HORIZONTAL)),
-        (State.split((1, 1), (3, 1)), Action.MOVE_DOWN,
+        (State.split((1, 1), (3, 1)), Move(Action.MOVE_DOWN, (1, 1)),
          State(2, 1, Orientation.VERTICAL)),
     ], ids=["horizontal", "horizontal_from_right", "vertical"])
-    def test_adjacent_cubes_merge(self, open_board, state, action, merged):
-        assert get_next_state(open_board, state, action) == merged
+    def test_adjacent_cubes_merge(self, open_board, state, move, merged):
+        assert get_next_state(open_board, state, move) == merged

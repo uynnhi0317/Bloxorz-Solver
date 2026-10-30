@@ -3,7 +3,7 @@ from pathlib import Path
 
 import pytest
 
-from game import (Action, Board, Orientation, State, SwitchEffect, SwitchKind,
+from game import (Action, Board, Move, Orientation, State, SwitchEffect, SwitchKind,
                   Tile, TileType, get_next_state, is_goal, load_stage)
 from game.rules import apply_switches, is_supported
 from game.tile import PermanentState
@@ -50,10 +50,10 @@ def _assert_mock_board(board):
     assert (board.height, board.width) == (5, 9)
     assert board.start == (2, 0)
     assert board.goal == (2, 6)
-    assert board.bridge_ids == ("bridge_closed", "bridge_open", "bridge_toggle")
-    assert board.initial_closed_bridges == ("bridge_closed",)
-    assert board.initial_bridge_mask == 0b001
-    assert board.initial_state == State(2, 0, Orientation.STANDING, bridge_mask=0b001)
+    assert board.bridge_ids == ("bridge_closed_1", "bridge_closed_2", "bridge_toggle")
+    assert board.initial_closed_bridges == ("bridge_closed_1", "bridge_closed_2")
+    assert board.initial_bridge_mask == 0b011
+    assert board.initial_state == State(2, 0, Orientation.STANDING, bridge_mask=0b011)
 
 @pytest.fixture
 def mock_data():
@@ -299,7 +299,7 @@ class TestStageLoader:
         assert mock_board.tile_at((1, 4)).permanent_state == PermanentState.OPEN
         heavy = mock_board.tile_at((3, 2))
         assert heavy.switch_kind == SwitchKind.HEAVY
-        assert heavy.permanent_state == PermanentState.CLOSE
+        assert heavy.permanent_state == PermanentState.OPEN
         assert mock_board.tile_at((3, 6)).destinations == ((1, 2), (3, 5))
 
     def test_defaults(self, mock_data):
@@ -457,7 +457,7 @@ class TestSplitSwitchTile:
 
     def test_single_cube_does_not_break_fragile(self):
         state = State.split((0, 3), (2, 3), bridge_mask=0b1)
-        next_state = get_next_state(_split_board(), state, Action.MOVE_LEFT)
+        next_state = get_next_state(_split_board(), state, Move(Action.MOVE_LEFT, (0, 3)))
         assert next_state is not None
         assert next_state.split_positions == ((0, 2), (2, 3))
 
@@ -467,25 +467,25 @@ class TestSplitSwitchTile:
     ], ids=["soft_triggered", "heavy_not_triggered"])
     def test_single_cube_on_switch(self, positions, selected, expected_mask):
         # Cube đang điều khiển lăn RIGHT lên soft (0,4) hoặc heavy (2,4)
-        state = State(0, 0, bridge_mask=0b1, split_positions=positions, selected_cube=selected)
-        assert get_next_state(_split_board(), state, Action.MOVE_RIGHT).bridge_mask == expected_mask
+        state = State(0, 0, bridge_mask=0b1, split_positions=positions)
+        assert get_next_state(_split_board(), state, Move(Action.MOVE_RIGHT, selected)).bridge_mask == expected_mask
 
     def test_resting_cube_on_soft_switch_is_not_triggered_again(self):
         # Cube (0,4) đứng sẵn trên soft, cube (2,0) di chuyển -> cầu giữ nguyên
-        state = State(0, 0, bridge_mask=0b1, split_positions=((0, 4), (2, 0)), selected_cube=(2, 0))
-        assert get_next_state(_split_board(), state, Action.MOVE_RIGHT).bridge_mask == 0b1
+        state = State(0, 0, bridge_mask=0b1, split_positions=((0, 4), (2, 0)))
+        assert get_next_state(_split_board(), state, Move(Action.MOVE_RIGHT, (2, 0))).bridge_mask == 0b1
 
 class TestMockStage:
     """Tích hợp fragile + switch + bridge trên màn mock."""
 
     def test_solution_reaches_goal(self, mock_board):
-        # Qua switch_toggle 2 lần (đóng rồi mở lại bridge_toggle), chạm switch_open,
-        # vòng qua fragile, lăn qua bridge_toggle và đứng trên goal
+        # Switch toggle đổi trạng thái bridge_toggle hai lần; switch_open mở
+        # bridge_closed_1. Cầu bridge_closed_2 vẫn đóng khi block đứng trên goal.
         moves = [Action.MOVE_RIGHT, Action.MOVE_UP, Action.MOVE_DOWN, Action.MOVE_UP,
                  Action.MOVE_RIGHT, Action.MOVE_RIGHT, Action.MOVE_DOWN, Action.MOVE_RIGHT]
         state = mock_board.initial_state
         for action in moves:
             state = get_next_state(mock_board, state, action)
             assert state is not None
-        assert state == State(2, 6, bridge_mask=0b001)
+        assert state == State(2, 6, bridge_mask=0b010)
         assert is_goal(mock_board, state)
