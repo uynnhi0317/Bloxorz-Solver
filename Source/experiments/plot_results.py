@@ -316,14 +316,17 @@ def _grid_shape() -> Tuple[int, int]:
 
 
 def _metric_grid(fig_width: float, row_height: float = 4.5):
-    """Tạo lưới biểu đồ con theo số chỉ số trong METRICS, ẩn ô thừa"""
+    """Tạo lưới biểu đồ con theo số chỉ số trong METRICS"""
     n = len(METRICS)
     nrows, ncols = _grid_shape()
-    fig, axes = plt.subplots(nrows, ncols, figsize = (fig_width, row_height * nrows + 1))
-    axes = list(np.atleast_1d(axes).ravel())
-    for ax in axes[n:]:
-        ax.set_visible(False)
-    return fig, axes[:n]
+    fig = plt.figure(figsize = (fig_width, row_height * nrows + 1))
+    grid = fig.add_gridspec(nrows, ncols * 2)  # mỗi biểu đồ chiếm 2 cột nhỏ để dịch được nửa ô
+    axes = []
+    for i in range(n):
+        r, c = divmod(i, ncols)
+        offset = ncols - min(ncols, n - r * ncols)  # số cột nhỏ cần dịch để căn giữa hàng này
+        axes.append(fig.add_subplot(grid[r, offset + 2 * c: offset + 2 * c + 2]))
+    return fig, axes
 
 
 def _grouped_bars(
