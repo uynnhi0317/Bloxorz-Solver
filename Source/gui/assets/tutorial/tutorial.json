@@ -1,0 +1,56 @@
+{
+  "title": "Tutorial",
+  "pages": [
+    {
+      "text": [
+        "Roll the block with the arrow keys or WASD.",
+        "Stand it upright on the goal hole to clear the stage.",
+        "Be careful not to fall off the edges!"
+      ],
+      "image": "01_basics.png"
+    },
+
+    {
+      "text": [
+        "Bridges and switches are located in many levels.",
+        "The switches are activated by when being pressed down by the block.",
+        "You don't need to stay on the switches to keep the brigdes closed.",
+        "",
+        "When activated, each switch may behave differently.",
+        "Some will toggle the bridges from open to closed to open.",
+        "Some will only open the bridges, pressing them again will not make them close."
+      ],
+      "image": "02_bridge.png"
+    },
+
+    {
+      "text": [
+        "There are 2 types of switches: 'Heavy' X-shaped and 'Solf' round shaped.",
+        "Solf switches are activated when any part of your block press it.",
+        "Heavy switches require more pressure. They are only activated when your block is standing on theirs end."
+      ],
+      "image": "03_switch_types.png"
+    },
+
+    {
+      "text": [
+        "Orange tiles are more fragile than the rest of the land.",
+        "If you stand up vertically on an orange tile, it will give way and you will fall."
+      ],
+      "image": "04_fragile.png"
+    },
+
+    {
+      "text": [
+        "There is also a 3rd kind of switch that is shaped like ( ).",
+        "It teleports you to a different locations, splitting your block into 2 smaller blocks at the same time.",
+        "They can be controlled individually and will rejoin into a normal block when they touch.",
+        "You can switch control between your split cubes with [Space].",
+        "",
+        "Have fun!"
+
+      ],
+      "image": "05_split_switch.png"
+    }
+  ]
+}

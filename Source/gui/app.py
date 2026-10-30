@@ -15,19 +15,22 @@ import threading
 
 import pygame
 
-from game import Board, Move, State, Action, get_next_state, is_goal, load_stage
-from .animations import (Animation, BridgeFlips, Sequence as AnimSequence, animate_fall, animate_intro, animate_move,
-                         animate_outro, animate_win, is_bump, DIR_DELTA)
+from game import Action, Board, Coord, Move, State, get_next_state, is_goal, load_stage
+from .animations import (Animation, BridgeFlips, DIR_DELTA, Sequence as AnimSequence, animate_fall,
+                         animate_intro, animate_move, animate_outro, animate_win, is_bump)
 from .controls import COLORS, KEY_ACTIONS, Button, Menu, draw_caps, draw_divider, draw_text, draw_title
 from .theme import Background
 from .renderer import Renderer
 from solvers import SolveResult
+from .tutorial import Tutorial
 
 SOURCE_DIR = Path(__file__).resolve().parent.parent
 STAGE_GROUPS = ("simple", "fragile", "switch", "combined")  # thứ tự tăng dần độ khó
 PAGE_COLS, PAGE_ROWS = 4, 2
 PAGE_SIZE = PAGE_COLS * PAGE_ROWS
 HUD_H = 56
+PANEL_BASE_W = 340          # bề rộng panel ở hệ số s = 1
+PANEL_MARGIN = 12
 
 CREDITS: List[Tuple[str, Tuple[str, str]]] = [
     ("Trần Tuấn Kiệt", ("Lead Systems Programmer · Core Architecture & Stage",
@@ -66,72 +69,140 @@ class PlaySession:
 
     def reset(self) -> None:
         self.state: State = self.board.initial_state
-        self.selected: Optional[Tuple[int, int]] = None  # cube đang điều khiển khi block tách
+        self.selected: Optional[Coord] = None
         self.renderer.selected = None
         self.moves = 0
         self.status = "playing"  # playing | won | lost
         self.anim: Optional[Animation] = None
         self.pending: Optional[Tuple[State, str]] = None
-        self.replay: Deque[Move] = deque()
+        self.replay: Deque[Action] = self.clear_solution()
         self.end_fx = None  # hiệu ứng tile còn lại sau animation cuối (vd tile fragile đã vỡ)
         self.flips.clear()
         self.renderer.prepare(self.state.bridge_mask)  # dựng sẵn ảnh sàn khử răng cưa
+        self.by_solver = False  # flag, is the finishing move by solver?
+        
 
     def start_intro(self) -> None:
         """Vào màn / restart: tile bay lên, khối rơi xuống; input bị khóa tới khi xong."""
         self.anim, self.pending = animate_intro(self.renderer, self.state), (self.state, "playing")
 
-    def toggle_cube(self) -> None:
-        """Đổi cube đang điều khiển (phím Space). Chỉ đổi trạng thái UI, không tính bước."""
-        if self.anim is not None or self.status != "playing" or self.state.split_positions is None:
-            return
-        a, b = self.state.split_positions
-        self.selected = b if self.selected == a else a
-        self.renderer.selected = self.selected
-
-    def _follow_selection(self, move: Move, nxt: State) -> None:
-        """Cập nhật cube đang chọn sau một nước đi hợp lệ"""
-        if nxt.split_positions is None:  # đã ghép lại
-            self.selected = None
-        elif self.state.split_positions is None:  # vừa tách: mặc định chọn cube đầu
-            self.selected = nxt.split_positions[0]
-        else:  # cube đang chọn đi theo vị trí mới
-            dr, dc = DIR_DELTA[move.action]
-            if move.cube is not None:
-                self.selected = (move.cube[0] + dr, move.cube[1] + dc)
-        self.renderer.selected = self.selected
-
-    def try_action(self, act: Action | Move) -> bool:
-        """Thực hiện một hành động; trả về False nếu bị bỏ qua (đang animation, đã kết thúc, bị chặn)."""
+    def try_action(self, move: Move, by_solver: bool = False) -> bool:
         if self.anim is not None or self.status != "playing":
             return False
-        split = self.state.split_positions is not None
-        if split and self.selected not in self.state.split_positions: # luôn có một cube được chọn
-            self.selected = self.renderer.selected = self.state.split_positions[0]
-        move = act if isinstance(act, Move) else Move(act, self.selected if split else None)
-        if split and move.cube is not None:  # replay: tự đổi cube theo lời giải
-            self.selected = self.renderer.selected = move.cube
+        self.by_solver = by_solver
         nxt = get_next_state(self.board, self.state, move)
         if nxt is None:
-            if is_bump(self.state, move):  # cube đâm vào cube kia: bị chặn, không phải thua
+            if is_bump(self.state, move):    # cube hit its twin: blocked, not a loss
                 return False
-            moving = self.state.split_positions.index(move.cube) if split and move.cube is not None else None
-            self.anim = animate_fall(self.renderer, self.state, move.action, moving=moving)
+            self.anim = animate_fall(self.renderer, self.state, move.action,
+                                    self._cube_index(move.cube))
             self.pending = (self.state, "lost")
             return True
         self.moves += 1
-        move_anim = animate_move(self.renderer, self.state, move, nxt)
-        self._follow_selection(move, nxt)
+        roll = animate_move(self.renderer, self.state, move, nxt)
+        self._sync_selected(nxt, move)       # AFTER building the animation, which captures colours
         if is_goal(self.board, nxt):
-            self.anim = AnimSequence(move_anim, animate_win(self.renderer, nxt), animate_outro(self.renderer, nxt))
+            parts = [roll, animate_win(self.renderer, nxt)]
+            if not by_solver:
+                parts.append(animate_outro(self.renderer, nxt))
+            self.anim = AnimSequence(*parts)
             self.pending = (nxt, "won")
         else:
-            self.anim, self.pending = move_anim, (nxt, "playing")
+            self.anim, self.pending = roll, (nxt, "playing")
         return True
 
-    def start_replay(self, moves: List[Move]) -> None:
-        self.replay = deque(moves)
+    def _set_selected(self, cell: Optional[Coord]) -> None:
+        self.selected = cell
+        self.renderer.selected = cell
 
+    def _active_cube(self) -> Optional[Coord]:
+        sp = self.state.split_positions
+        if sp is None:
+            return None
+        return self.selected if self.selected in sp else sp[0]
+
+    def _cube_index(self, cube: Optional[Coord]) -> int:
+        sp = self.state.split_positions
+        return sp.index(cube) if sp is not None and cube in sp else 0
+
+    def toggle_cube(self) -> None:
+        """UI only: swap the controlled cube. No move, no state change."""
+        if self.anim is None and self.status == "playing" and self.state.split_positions is not None:
+            a, b = self.state.split_positions
+            self._set_selected(b if self._active_cube() == a else a)
+
+    def _sync_selected(self, nxt: State, move: Move) -> None:
+        if nxt.split_positions is None:      # whole block, or just merged
+            self._set_selected(None)
+        elif move.cube is None:              # just split on a switch
+            self._set_selected(nxt.split_positions[0])
+        else:                                # follow the cube that moved
+            dr, dc = DIR_DELTA[move.action]
+            self._set_selected((move.cube[0] + dr, move.cube[1] + dc))
+
+    def clear_solution(self) -> None:
+        self.sol_actions: Optional[List[Action]] = None
+        self.sol_states: List[State] = []   # sol_states[i] = state after i steps (0 = start)
+        self.sol_moves: List[int] = []      # move counter after i steps
+        self.sol_idx = 0
+        self.sol_paused = False
+
+    @property
+    def has_solution(self) -> bool:
+        return self.sol_actions is not None
+
+    @property
+    def replaying(self) -> bool:
+        """Replay is actively running (not paused, steps left) -> player input is locked."""
+        return self.has_solution and not self.sol_paused and self.sol_idx < len(self.sol_actions)
+
+    def start_replay(self, actions: List[Action]) -> None:
+        states, moves = [self.state], [self.moves]
+        for a in actions:
+            nxt = get_next_state(self.board, states[-1], a)
+            if nxt is None:
+                break
+            states.append(nxt)
+            moves.append(moves[-1] + 1)
+        self.clear_solution()
+        if len(states) > 1:
+            self.sol_actions = list(actions[:len(states) - 1])
+            self.sol_states, self.sol_moves = states, moves
+
+    def toggle_replay_pause(self) -> None:
+        self.sol_paused = not self.sol_paused
+
+    def step_forward(self) -> bool:
+        if (self.anim is not None or self.status != "playing" or not self.has_solution
+                or self.sol_idx >= len(self.sol_actions)):
+            return False
+        if self.try_action(self.sol_actions[self.sol_idx], by_solver=True):
+            self.sol_idx += 1
+            return True
+        self.clear_solution()  # solution no longer valid
+        return False
+
+    def step_back(self) -> bool:
+        if (self.anim is not None or self.status != "playing" or not self.has_solution
+                or self.sol_idx == 0):
+            return False
+        old = self.state
+        self.sol_idx -= 1
+        self.state, self.moves = self.sol_states[self.sol_idx], self.sol_moves[self.sol_idx]
+        mv = self.sol_actions[self.sol_idx]      # the move we just undid
+        self._set_selected(mv.cube if self.state.split_positions is not None else None)
+        if self.state.bridge_mask != old.bridge_mask:  # same handling as in update()
+            self.renderer.prepare(self.state.bridge_mask)
+            self.flips.start(old.bridge_mask, self.state.bridge_mask)
+        return True
+
+    def manual_action(self, action: Action) -> bool:
+        """Player input: if it goes through, we've left the solver's path."""
+        if self.try_action(Move(action=action, cube=self._active_cube())):
+            self.sol_actions = None
+            return True
+        return False
+    
     def update(self, dt_ms: float) -> None:
         self.flips.update(dt_ms)
         if self.anim is not None:
@@ -144,10 +215,9 @@ class PlaySession:
                     self.flips.start(self.state.bridge_mask, new_state.bridge_mask)
                 self.state, self.anim, self.pending = new_state, None, None
                 if self.status != "playing":
-                    self.replay.clear()
-        if self.anim is None and self.status == "playing" and self.replay:
-            if not self.try_action(self.replay.popleft()):
-                self.replay.clear()
+                    self.clear_solution()
+        if self.anim is None and self.status == "playing" and self.replaying:
+            self.step_forward()
 
     def draw(self, surface: pygame.Surface) -> None:
         self.renderer.ambient_fx = self.flips.fx()
@@ -173,8 +243,10 @@ class App:
         self.running = True
         self.stages = discover_stages()
         self.scene = "menu"  # menu | select | credits | play
-        self.main_menu = Menu(["New Game", "Load Stage", "Credits", "Quit"])
-        self.pause_menu = Menu(["Resume", "Quit to Menu"])
+        self.main_menu = Menu(["New Game", "Load Stage", "Tutorial", "Credits", "Quit"])       
+        self.pause_menu = Menu(["Resume", "Tutorial", "Quit to Menu"])
+        self.tutorial_return = "menu"      # "newgame" | "menu" | "play"
+        self.tutorial_seen = False         # auto-show only once per launch
         self.end_menu = Menu([])
         self._end_status = "playing"
         self.paused = False
@@ -185,16 +257,72 @@ class App:
         self._thumbs: Dict[Tuple[int, Tuple[int, int]], Optional[pygame.Surface]] = {}
         self._size = self.screen.get_size()
         self.background = Background(self._size)
+        self.tutorial = Tutorial() 
 
         self.solvers: Dict[str, Solver] = {}
         self.btn_pause = Button("", icon="pause")
         self.btn_restart = Button("Restart")
+        self.btn_replay = Button("Pause")
+        self.btn_prev = Button("< Prev")
+        self.btn_next = Button("Next >")
+        self.replay_buttons = (self.btn_replay, self.btn_prev, self.btn_next)
         self.solve_buttons = {name: Button(name, enabled=False) for name in ("BFS", "DFS", "UCS", "A*")}
-        self.hud_buttons = [self.btn_restart, *self.solve_buttons.values()]
+        self.btn_solver = Button("Solver")
+        self.btn_stage_prev = Button("< Stage")
+        self.btn_stage_next = Button("Stage >")
+        self.btn_solver = Button("Solver")
+        self.hud_buttons = [self.btn_stage_prev, self.btn_stage_next, self.btn_restart, self.btn_solver]
+        self.btn_again = Button("Solve again")      # in the panel, after a solver finished
+        self.btn_to_next = Button("Next stage")
+        
+        self.solve_done = False                     # last stage was finished by a solver
+        self.solve_start: Optional[State] = None    # state the last solver run started from
 
         self.solving: Optional[str] = None
-        self._solve_out = None  # (name, start_state, result, error)
-        self.last_stats = None  # (name, result)
+        self._solve_out = None          # (name, start_state, result, error)
+        self.last_stats = None          # (name, result)
+        self._gen = 0
+        self.panel_on = False
+        self.last_label = "Finish"
+
+    #-------------------------------------------------------------------
+    def _set_panel(self, on: bool) -> None:
+        """Mở/đóng cột metrics; board được dựng lại cho vùng mới."""
+        if self.panel_on == on:
+            return
+        self.panel_on = on
+        if self.session:
+            self.session.renderer.set_area(self.board_area())
+            self.session.renderer.prepare(self.session.state.bridge_mask)  # dựng sẵn, đỡ khựng
+
+    def _panel_scale(self) -> float:
+        """Hệ số theo cửa sổ: =1 ở ~1536x864 (80% màn 1920x1080), kẹp trong [0.6, 1.5]."""
+        w, h = self.screen.get_size()
+        return max(0.6, min(1.5, min(w / 1536, h / 864)))
+
+    def _panel_w(self) -> int:
+        return int(PANEL_BASE_W * self._panel_scale())
+
+    def _reset_solver_ui(self) -> None:
+        self._gen += 1
+        self.solving = None
+        self._solve_out = None
+        self.last_stats = None
+        self.solve_done = False
+        self.solve_start = None
+        self.toast_ms = 0.0
+
+    def _done_click(self, pos) -> bool:
+        if not (self.panel_on and self.solve_done):
+            return False
+        if self.btn_again.hit(pos):
+            if self.last_stats:
+                self.run_solver(self.last_stats[0])   # solves from the fresh start state
+            return True
+        if self.btn_to_next.enabled and self.btn_to_next.hit(pos):
+            self.start_stage(self.session.index + 1)
+            return True
+        return False
 
     # ------------------------------------------------------------------ API cho T14
     def register_solver(self, name: str, fn: Solver) -> None:
@@ -207,9 +335,11 @@ class App:
 
     def board_area(self) -> pygame.Rect:
         w, h = self.screen.get_size()
-        return pygame.Rect(0, HUD_H, w, h - HUD_H)
+        side = self._panel_w() + 2 * PANEL_MARGIN if self.panel_on else 0
+        return pygame.Rect(0, HUD_H, max(1, w - side), h - HUD_H)
 
     def start_stage(self, index: int) -> None:
+        self._reset_solver_ui()
         try:
             board = load_stage(self.stages[index])
         except Exception as exc:  # file stage hỏng: không crash cả app
@@ -221,20 +351,26 @@ class App:
         self.select_index = index
         self.scene, self.paused, self._end_status = "play", False, "playing"
 
-    def restart(self) -> None:
+    def restart(self, keep_solver_ui: bool = False) -> None:
         if self.session:
+            if not keep_solver_ui:
+                self._reset_solver_ui()
             self.session.reset()
             self.session.start_intro()
             self.paused, self._end_status = False, "playing"
 
     def run_solver(self, name: str) -> None:
         s = self.session
-        if s is None or s.status != "playing" or s.anim is not None or s.replay or self.solving:
+        if s is None or s.status != "playing" or s.anim is not None or s.replaying or self.solving:
             return
         fn = self.solvers.get(name)
         if fn is None:
             self.toast(f"Solver {name} chưa được tích hợp")
             return
+        s.clear_solution()
+        self.last_stats = None        # otherwise the old numbers stay on screen while solving
+        self.solve_done = False
+        self.solve_start = s.state
         self.solving = name
         self.toast(f"{name}: đang giải...", 600000)
         board, start = s.board, s.state
@@ -254,8 +390,10 @@ class App:
         name, start, res, err = out
         self.solving, self.toast_ms = None, 0.0
         s = self.session
-        if self.scene != "play" or s is None or s.status != "playing" or s.state != start:
-            return  # người chơi đã thoát/restart/đi tiếp: kết quả cũ, bỏ
+        s = self.session
+        in_game = self.scene == "play" or (self.scene == "tutorial" and self.tutorial_return == "play")
+        if not in_game or s is None or s.status != "playing" or s.state != start:
+            return
         if err is not None:
             self.toast(f"{name} lỗi: {err}", 4000)
             return
@@ -265,6 +403,51 @@ class App:
         else:
             s.start_replay(list(res.moves))
 
+    def _replay_click(self, pos) -> bool:
+        s = self.session
+        if not (self.panel_on and s.has_solution):
+            return False
+        for b, act in ((self.btn_replay, s.toggle_replay_pause),
+                    (self.btn_prev, s.step_back), (self.btn_next, s.step_forward)):
+            if b.enabled and b.hit(pos):
+                act()
+                return True
+        return False
+
+    def _on_game_over(self) -> None:
+        """Player thua: thử lại. Solver thắng: giữ số liệu, chạy lại intro của stage.
+        Player thắng: tự động next stage, nếu là final stage thì có overlay 'You Win!'."""
+        s = self.session
+        index, moves, by_solver = s.index, s.moves, s.by_solver
+        if s.status == "lost":
+            self.restart()
+            self.toast("Rơi rồi, thử lại!")
+        elif by_solver:
+            self.restart(keep_solver_ui=True)
+            self.solve_done = True
+        elif index + 1 < len(self.stages):
+            self.start_stage(index + 1)
+            self.toast(f"Qua màn {index + 1} ({moves} bước)")
+        else:
+            self.end_menu.set_items(["Restart", "Quit to Menu"])  # final stage: overlay stays
+
+    def _open_tutorial(self, mode: str) -> bool:
+        if not self.tutorial.pages:
+            return False
+        self.tutorial_return = mode
+        self.tutorial.open(mode)
+        self.scene = "tutorial"
+        return True
+
+    def _close_tutorial(self) -> None:
+        mode = self.tutorial_return
+        if mode == "newgame":
+            self.start_stage(0)
+        elif mode == "play":
+            self.scene = "play"          # self.paused stays True -> back to the pause menu
+        else:
+            self.scene = "menu"
+
     # ------------------------------------------------------------------ event
     def handle_event(self, e: pygame.event.Event) -> None:
         """Chọn handle event phù hợp với từng scene"""
@@ -272,6 +455,9 @@ class App:
             self.running = False
         elif self.scene == "menu":
             self._event_menu(e)
+        elif self.scene == "tutorial":
+            if self.tutorial.handle(e) == "exit":
+                self._close_tutorial()
         elif self.scene == "select":
             self._event_select(e)
         elif self.scene == "credits":
@@ -285,10 +471,15 @@ class App:
         """Handle event khi ở menu chính"""
         choice = self.main_menu.handle(e)
         if choice == "New Game":
-            if self.stages:
-                self.start_stage(0)
-            else:
+            if not self.stages:
                 self.toast("Chưa có stage nào trong stages/")
+            elif not self.tutorial_seen and self._open_tutorial("newgame"):
+                self.tutorial_seen = True
+            else:
+                self.start_stage(0)
+        elif choice == "Tutorial":
+            if not self._open_tutorial("menu"):
+                self.toast(self.tutorial.error, 4000)
         elif choice == "Load Stage":
             self.scene = "select"
         elif choice == "Credits":
@@ -332,6 +523,9 @@ class App:
             choice = self.pause_menu.handle(e)
             if choice == "Resume" or (e.type == pygame.KEYDOWN and e.key == pygame.K_ESCAPE):
                 self.paused = False
+            elif choice == "Tutorial":
+                if not self._open_tutorial("play"):
+                    self.toast(self.tutorial.error, 4000)
             elif choice == "Quit to Menu":
                 self.scene = "menu"
             return
@@ -349,20 +543,30 @@ class App:
                 self.paused = True
             elif e.key == pygame.K_r:
                 self.restart()
-            elif e.key == pygame.K_SPACE and not s.replay:  # đổi cube đang điều khiển
-                s.toggle_cube()
-            elif e.key in KEY_ACTIONS and not s.replay and not self.solving:  # đang replay lời giải thì khóa input
-                s.try_action(KEY_ACTIONS[e.key])
+            elif e.key == pygame.K_SPACE:
+                if not s.replaying and not self.solving:
+                    s.toggle_cube()
+            elif e.key in KEY_ACTIONS and not s.replaying and not self.solving:
+                s.manual_action(KEY_ACTIONS[e.key])
         elif e.type == pygame.MOUSEBUTTONDOWN and e.button == 1:
             if self.btn_pause.hit(e.pos):
                 self.paused = True
             elif self.btn_restart.hit(e.pos):
                 self.restart()
-            else:
+            elif self.btn_stage_prev.enabled and self.btn_stage_prev.hit(e.pos):
+                self.start_stage(s.index - 1)
+            elif self.btn_stage_next.enabled and self.btn_stage_next.hit(e.pos):
+                self.start_stage(s.index + 1)
+            elif self.btn_solver.hit(e.pos):
+                self._set_panel(not self.panel_on)
+            elif self._replay_click(e.pos):
+                pass
+            elif self._done_click(e.pos):
+                pass
+            elif self.panel_on:
                 for name, b in self.solve_buttons.items():
                     if b.hit(e.pos):
                         self.run_solver(name)
-
     # ------------------------------------------------------------------ update
     def update(self, dt: float) -> None:
         # cửa sổ đổi kích thước, về sau tuy game đã chỉnh thành FULLSCREEN nhưng vẫn để code ở đây phòng khi đổi ý
@@ -385,11 +589,8 @@ class App:
         s.update(dt)
         if s.status != self._end_status:
             self._end_status = s.status
-            if s.status == "won":
-                has_next = s.index + 1 < len(self.stages)
-                self.end_menu.set_items((["Next Stage"] if has_next else []) + ["Restart", "Quit to Menu"])
-            elif s.status == "lost":
-                self.end_menu.set_items(["Retry", "Quit to Menu"])
+            if s.status != "playing":
+                self._on_game_over()
 
     # ------------------------------------------------------------------ draw
     def draw(self) -> None:
@@ -398,11 +599,13 @@ class App:
         self.background.draw(surf)
         w, h = surf.get_size()
         if self.scene == "menu":
-            draw_divider(surf, w // 2, h // 2 - 300, 720)
-            draw_title(surf, "Bloxorz", 140, center=(w // 2, h // 2 - 190))
-            draw_title(surf, "Solver", 85, color=COLORS["accent"], center=(w // 2, h // 2 - 80))
-            draw_divider(surf, w // 2, h // 2 - 10, 620, flip=True)
-            self.main_menu.draw(surf, w // 2, h // 2 + 40)  # thấp hơn một dòng so với trước (-70)
+            draw_divider(surf, w // 2, h // 2 - 320, 720)
+            draw_title(surf, "Bloxorz", 140, center=(w // 2, h // 2 - 220))
+            draw_title(surf, "Solver", 85, color=COLORS["accent"], center=(w // 2, h // 2 - 110))
+            draw_divider(surf, w // 2, h // 2 - 40, 620, flip=True)
+            self.main_menu.draw(surf, w // 2, h // 2 + 10)  # thấp hơn một dòng so với trước (-70)
+        elif self.scene == "tutorial":
+            self.tutorial.draw(surf)
         elif self.scene == "select":
             self._draw_select(surf)
         elif self.scene == "credits":
@@ -413,11 +616,9 @@ class App:
             if self.paused:
                 self._draw_overlay(surf, "Paused", COLORS["text"], "", self.pause_menu)
             elif self.session.status == "won":
-                last = self.session.index + 1 >= len(self.stages)
-                sub = f"Moves: {self.session.moves}" + ("  -  All stages cleared!" if last else "")
+                sub = f"Moves: {self.session.moves}  -  All stages cleared!"
                 self._draw_overlay(surf, "You Win!", COLORS["win"], sub, self.end_menu)
-            elif self.session.status == "lost":
-                self._draw_overlay(surf, "You Lose", COLORS["lose"], f"Moves: {self.session.moves}", self.end_menu)
+            self._draw_metrics(surf)
         if self.toast_ms > 0:
             r = draw_text(surf, self.toast_text, 20, COLORS["text"], midbottom=(w // 2, h - 24))
             pygame.draw.rect(surf, COLORS["panel"], r.inflate(28, 16), border_radius=8)
@@ -427,35 +628,32 @@ class App:
         """HUD trong game"""
         w = surf.get_width()
         self.btn_pause.rect = pygame.Rect(12, 10, 36, 36)
-        x = w - 12
+        x = w - 12 - (self._panel_w() + 2 * PANEL_MARGIN if self.panel_on else 0)
         for b in reversed(self.hud_buttons):
-            width = 92 if b is self.btn_restart else 64
-            x -= width
-            b.rect = pygame.Rect(x, 10, width, 36)
+            x -= 92
+            b.rect = pygame.Rect(x, 10, 92, 36)
             x -= 8
         for b in (self.btn_pause, *self.hud_buttons):
             b.draw(surf)
         s = self.session
+        
+        self.btn_stage_prev.enabled = s.index > 0
+        self.btn_stage_next.enabled = s.index + 1 < len(self.stages)
         r = draw_text(surf, f"Stage {s.index + 1}", 22, COLORS["text"], bold=True, midleft=(66, HUD_H // 2))
         draw_text(surf, f"Moves: {s.moves}", 20, COLORS["muted"], midleft=(r.right + 24, HUD_H // 2))
-        if self.last_stats:
-            name, r = self.last_stats
-            txt = (f"{name} | {r.time * 1000:.1f} ms | {r.peak_memory / 1024:.0f} KiB | "
-                f"{r.expanded_nodes} nodes | moves: {r.solution_length}")
-            draw_text(surf, txt, 25, COLORS["text"], bottomleft=(16, surf.get_height() - 12))
 
     def _draw_overlay(self, surf, title, color, subtitle, menu: Menu) -> None:
-        """Overlay như Paused, Win, Lose"""
         w, h = surf.get_size()
+        cx = self.board_area().centerx
         dim = pygame.Surface((w, h), pygame.SRCALPHA)
         dim.fill((10, 12, 18, 175))
         surf.blit(dim, (0, 0))
-        glow = tuple((c + 130) // 2 for c in color)  # quầng sáng hơi ngả theo màu tiêu đề
-        draw_divider(surf, w // 2, h // 2 - 190, 340)
-        draw_title(surf, title, 56, color=color, glow_color=glow, center=(w // 2, h // 2 - 130))
+        glow = tuple((c + 130) // 2 for c in color)
+        draw_divider(surf, cx, h // 2 - 190, 340)
+        draw_title(surf, title, 56, color=color, glow_color=glow, center=(cx, h // 2 - 130))
         if subtitle:
-            draw_caps(surf, subtitle, 22, COLORS["muted"], center=(w // 2, h // 2 - 78))
-        menu.draw(surf, w // 2, h // 2 - 20)
+            draw_caps(surf, subtitle, 22, COLORS["muted"], center=(cx, h // 2 - 78))
+        menu.draw(surf, cx, h // 2 - 20)
 
     def _draw_credits(self, surf: pygame.Surface) -> None:
         """Vẽ credits"""
@@ -474,6 +672,120 @@ class App:
             draw_text(surf, line2, 25, COLORS["muted"], midtop=(w // 2, y + 130))
             y += 260
         draw_text(surf, "Esc: back", 18, COLORS["muted"], bottomright=(w - 16, h - 12))
+
+    @staticmethod
+    def _describe_state(st: Optional[State]) -> str:
+        if st is None:
+            return "-"
+        cells = "+".join(f"({r},{c})" for r, c in st.occupied_cells)
+        if st.split_positions is not None:
+            return f"split {cells}"
+        return f"{cells} standing" if len(st.occupied_cells) == 1 else f"{cells} lying"
+
+    def _panel_title(self, surf, x, y, text, s) -> None:
+        pygame.draw.rect(surf, COLORS["accent"], (x, y, max(2, int(3 * s)), int(20 * s)))
+        draw_text(surf, text, max(10, int(22 * s)), COLORS["text"], bold=True,
+                midleft=(x + int(10 * s), y + int(9 * s)))
+
+    def _panel_row(self, surf, x, y, pw, s, label, value) -> None:
+        row = pygame.Rect(x, y, pw, int(30 * s))
+        pygame.draw.rect(surf, COLORS["panel"], row, border_radius=int(6 * s))
+        draw_text(surf, label, max(9, int(18 * s)), COLORS["accent"],
+                midleft=(row.x + int(10 * s), row.centery))
+        draw_text(surf, value, max(10, int(19 * s)), COLORS["text"], bold=True,
+                midright=(row.right - int(10 * s), row.centery))
+
+    def _draw_metrics(self, surf: pygame.Surface) -> None:
+        """Cột SOLVER bên phải: nút solver, thông tin màn, số liệu, điều khiển replay / sau khi giải."""
+        if not self.panel_on:
+            return
+        s = self._panel_scale()
+        w, h = surf.get_size()
+        pw = self._panel_w()
+        col = pygame.Rect(w - pw - 2 * PANEL_MARGIN, 0, pw + 2 * PANEL_MARGIN, h)
+
+        bg = pygame.Surface(col.size, pygame.SRCALPHA)
+        bg.fill((*COLORS["bar"], 235))
+        surf.blit(bg, col)
+        pygame.draw.line(surf, COLORS["border"], col.topleft, col.bottomleft, 1)
+
+        x, y = col.x + PANEL_MARGIN, PANEL_MARGIN + int(30 * s)
+        row_step = int(38 * s)                      # row height + gap
+        bh, g = max(28, int(38 * s)), int(8 * s)
+        half = (pw - g) // 2
+        sess = self.session
+        board = sess.board
+
+        draw_divider(surf, x + pw // 2, y, pw)
+        draw_divider(surf, x + pw // 2, h - y, pw, flip=True)
+        y += int(35 * s)
+
+        # --- solver buttons 2x2
+        self._panel_title(surf, x, y, "SOLVER", s)
+        y += int(40 * s)
+        for i, b in enumerate(self.solve_buttons.values()):
+            b.rect = pygame.Rect(x + (i % 2) * (half + g), y + (i // 2) * (bh + g), half, bh)
+            b.draw(surf)
+        y += 2 * bh + g + int(24 * s)
+
+        # --- stage info (always)
+        self._panel_title(surf, x, y, "STAGE INFO", s)
+        y += int(38 * s)
+        for label, value in (("Map size", f"{board.height} x {board.width}"),
+                            ("Goal", f"({board.goal[0]}, {board.goal[1]})")):
+            self._panel_row(surf, x, y, pw, s, label, value)
+            y += row_step
+        y += int(16 * s)
+
+        # --- metrics
+        if self.last_stats:
+            name, r = self.last_stats
+            values = [f"{r.time * 1000:.2f} ms", f"{r.expanded_nodes:,}", f"{r.peak_memory / 1024:.1f} KB",
+                    f"{r.solution_length} moves" if r.is_solved else "no solution"]
+        elif self.solving:
+            name, values = self.solving, ["..."] * 4
+        else:
+            draw_text(surf, "Choose a solver to run", max(9, int(18 * s)), COLORS["muted"],
+                    midleft=(x, y + int(8 * s)))
+            return
+
+        self._panel_title(surf, x, y, f"SEARCH METRICS - {name}", s)
+        y += int(38 * s)
+        labels = ("Search time", "Nodes expanded", "Memory (peak)", "Solution length")
+        rows = [("Start state", self._describe_state(self.solve_start))] + list(zip(labels, values))
+        for label, value in rows:
+            self._panel_row(surf, x, y, pw, s, label, value)
+            y += row_step
+        y += int(8 * s)
+
+        # --- after the metrics: replay controls, or Solve again / Next stage
+        if sess.has_solution:
+            n = len(sess.sol_actions)
+            draw_text(surf, f"Step {sess.sol_idx} / {n}", max(10, int(22 * s)), COLORS["accent"],
+                    bold=True, midleft=(x, y + int(9 * s)))
+            y += int(26 * s)
+            bar_h = max(4, int(6 * s))
+            pygame.draw.rect(surf, COLORS["accent_dark"], (x, y, pw, bar_h), border_radius=bar_h // 2)
+            pygame.draw.rect(surf, COLORS["accent"], (x, y, int(pw * sess.sol_idx / n), bar_h),
+                            border_radius=bar_h // 2)
+            y += bar_h + int(16 * s)
+
+            paused = sess.sol_paused
+            self.btn_replay.label = "Resume" if paused else "Pause"
+            self.btn_replay.enabled = True
+            self.btn_prev.enabled = paused and sess.sol_idx > 0
+            self.btn_next.enabled = paused and sess.sol_idx < n
+            self.btn_replay.rect = pygame.Rect(x, y, pw, bh)
+            self.btn_prev.rect = pygame.Rect(x, y + bh + g, half, bh)
+            self.btn_next.rect = pygame.Rect(x + half + g, y + bh + g, half, bh)
+            for b in self.replay_buttons:
+                b.draw(surf)
+        elif self.solve_done:
+            self.btn_again.rect = pygame.Rect(x, y, pw, bh)
+            self.btn_to_next.rect = pygame.Rect(x, y + bh + g, pw, bh)
+            self.btn_to_next.enabled = sess.index + 1 < len(self.stages)   # greyed on the last stage
+            self.btn_again.draw(surf)
+            self.btn_to_next.draw(surf)
 
     # --- chọn màn / Load Stage
     def _select_rects(self) -> List[pygame.Rect]:
@@ -512,7 +824,7 @@ class App:
         n = len(self.stages)
         page, pages = self.select_index // PAGE_SIZE, max(1, math.ceil(n / PAGE_SIZE))
         draw_text(surf, "Select Stage", 40, COLORS["text"], bold=True, center=(w // 2, 80))
-        draw_divider(surf, w // 2, 120, 340, flip=True)            
+        draw_divider(surf, w // 2, 120, 340, flip=True)
 
         # các slot hiện stage
         rects = self._select_rects()

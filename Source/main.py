@@ -21,13 +21,6 @@ class StartedBoard:
 
 
 def main() -> None:
-    # Cho DFS đệ quy khỏi chết ở ~1000 tầng, và thread solver có stack đủ lớn
-    sys.setrecursionlimit(20_000)
-    try:
-        threading.stack_size(64 * 1024 * 1024)  # 64 MiB, cần chia hết cho 4096, chỉ ảnh hưởng thread tạo SAU dòng này
-    except (ValueError, RuntimeError):
-        pass  # không đặt được thì dùng stack mặc định, DFS sâu có thể lỗi
-
     app = App()
     for solver in (BFSSolver(), DFSSolver(), UCSSolver(), AStarSolver()):
         app.register_solver(
