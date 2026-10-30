@@ -157,7 +157,7 @@ class Tutorial:
         if img:
             r = img.get_rect(midright=(w - mx, (top + bottom) // 2))
             surf.blit(img, r)
-            pygame.draw.rect(surf, COLORS["border"], r.inflate(8, 8), 3, border_radius=6)
+            pygame.draw.rect(surf, COLORS["border"], r.inflate(8, 8), 3)
 
         bw, bh = int(170 * s), max(30, int(42 * s))
         by = h - int(50 * s) - bh

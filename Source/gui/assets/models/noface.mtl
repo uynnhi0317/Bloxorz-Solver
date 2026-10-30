@@ -1,0 +1,26 @@
+# noface.mtl - sinh bởi make_assets.py
+newmtl cloak
+Kd 1.0000 1.0000 1.0000
+d 1.000
+illum 2
+map_Kd ../textures/cloak.png
+
+newmtl edge
+Kd 0.5882 0.5020 0.4627
+d 1.000
+illum 2
+
+newmtl mask
+Kd 0.9804 0.9569 0.9020
+d 1.000
+illum 0
+
+newmtl mark
+Kd 0.5882 0.4078 0.5333
+d 1.000
+illum 0
+
+newmtl eye
+Kd 0.2118 0.1804 0.1804
+d 1.000
+illum 0

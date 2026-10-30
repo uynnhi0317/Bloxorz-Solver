@@ -32,10 +32,11 @@ def _scene(name: str, tiles: List[list], start: Tuple[int, int], state=None, clo
     surf = pygame.Surface(IMAGE_SIZE)
     bg = Background(IMAGE_SIZE)
     bg.update(4000)
-    bg.draw(surf)
+    bg.draw_under(surf)
     # tile_width lớn: bàn chơi luôn co/giãn vừa khung
     renderer = Renderer(board, pygame.Rect(16, 16, w - 32, h - 32), tile_width=1000.0)
     renderer.selected = selected
+    renderer.water_pass = bg.draw_water
     renderer.draw(surf, state or board.initial_state)
     pygame.image.save(surf, str(SOURCE_DIR / "gui" / "assets" / "tutorial" / name))
     print(name)

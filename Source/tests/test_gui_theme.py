@@ -32,8 +32,7 @@ SPLIT = {"type": "switch", "switch": "split", "destinations": [[0, 0], [2, 4]]}
 def display():
     pygame.init()
     pygame.display.set_mode((1200, 760))
-    yield
-    pygame.quit()
+    yield   # không pygame.quit(): font đã cache sẽ thành đối tượng chết với các module test chạy sau
 
 
 @pytest.fixture

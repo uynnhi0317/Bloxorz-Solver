@@ -17,7 +17,10 @@ import pygame
 
 from game import Action, Board, Coord, Move, State, get_next_state, is_goal, load_stage
 from .animations import (Animation, BridgeTransitions, DIR_DELTA, Sequence as AnimSequence, SwitchPulses, animate_fall,
-                         animate_intro, animate_move, animate_outro, animate_win, is_bump, triggered_switches)
+                         animate_intro, animate_move, animate_outro, animate_win, is_bump, merged_rotation, roll_matrix,
+                         triggered_switches)
+from .camera import Camera
+from .mesh_render import IDENTITY
 from .controls import COLORS, KEY_ACTIONS, Button, Menu, draw_caps, draw_divider, draw_ema, draw_text, draw_title, font
 from .noface import mascot_sprite
 from .theme import LEAF, SAKURA_DEEP, TORII_RED, Background, flower_sprite
@@ -31,7 +34,9 @@ PAGE_COLS, PAGE_ROWS = 4, 2
 PAGE_SIZE = PAGE_COLS * PAGE_ROWS
 HUD_H = 66
 HUD_ROPE_Y = 12             # dây đỏ ngang để treo các nút Ema trên HUD
-PANEL_BASE_W = 340          # bề rộng panel ở hệ số s = 1
+PANEL_BASE_W = 400          # bề rộng panel ở hệ số s = 1
+PANEL_BASE_H = 880          # chiều cao cần cho nội dung đầy đủ nhất của panel ở hệ số s = 1
+CAMERA_SETTLE_MS = 140      # ngừng zoom bao lâu thì dựng lại hình chất lượng cao
 PANEL_MARGIN = 12
 
 CREDITS: List[Tuple[str, Tuple[str, str]]] = [
@@ -48,7 +53,7 @@ CREDITS: List[Tuple[str, Tuple[str, str]]] = [
 Solver = Callable[[Board, State], "SolveResult"]  # có .moves/.time/.peak_memory/.expanded_nodes
 
 # Dải màu riêng trên thẻ Ema của từng thuật toán, để nhìn là phân biệt được
-SOLVER_ACCENTS = {"BFS": LEAF, "DFS": SAKURA_DEEP, "UCS": (108, 158, 206), "A*": TORII_RED}
+SOLVER_ACCENTS = {"BFS": LEAF, "DFS": SAKURA_DEEP, "UCS": (104, 170, 168), "A*": TORII_RED}
 
 
 def discover_stages(root: Path = SOURCE_DIR) -> List[Path]:
@@ -79,6 +84,9 @@ class PlaySession:
         self.selected: Optional[Coord] = None
         self.renderer.selected = None
         self.renderer.head_cell = None
+        self.renderer.figure_rot = IDENTITY
+        self.renderer.cube_rots = {"head": IDENTITY, "body": IDENTITY}
+        self.fig_history: List[tuple] = []   # (figure_rot, head_cell, cube_rots) trước mỗi nước, để đi lùi trong lời giải
         self.renderer.split_active = False
         self.moves = 0
         self.status = "playing"  # playing | won | lost
@@ -112,7 +120,7 @@ class PlaySession:
         self.moves += 1
         roll = animate_move(self.renderer, self.state, move, nxt)
         self.pending_switches = triggered_switches(self.board, self.state, nxt, move)
-        self._sync_head(nxt, move)           # AFTER building the animation, which captures figure + colours
+        self._sync_figure(nxt, move)         # AFTER building the animation, which captures figure + colours
         self._sync_selected(nxt, move)
         if is_goal(self.board, nxt):
             parts = [roll, animate_win(self.renderer, nxt)]
@@ -153,19 +161,30 @@ class PlaySession:
             dr, dc = DIR_DELTA[move.action]
             self._set_selected((move.cube[0] + dr, move.cube[1] + dc))
 
-    def _sync_head(self, nxt: State, move: Move) -> None:
-        """Thuần hình ảnh: cube nào mang phần đầu Vô Diện. split_positions được sắp xếp lại sau mỗi bước
-        nên phải bám theo cube đã di chuyển, nếu không đầu và thân sẽ đổi chỗ cho nhau khi vẽ."""
-        if nxt.split_positions is None:
-            self.renderer.head_cell = None
-        elif self.state.split_positions is None:
-            self.renderer.head_cell = nxt.split_positions[0]
+    def _sync_figure(self, nxt: State, move: Move) -> None:
+        """Thuần hình ảnh, không thuộc State: hướng của Vô Diện đi theo đúng các cú lăn đã thực hiện, và
+        cube nào mang phần đầu (split_positions được sắp xếp lại sau mỗi bước nên phải bám theo cube đã đi)."""
+        r, before = self.renderer, self.state
+        self.fig_history.append((r.figure_rot, r.head_cell, r.cube_rots))
+        turn = roll_matrix(move.action)
+        if before.split_positions is None:
+            if nxt.split_positions is None:
+                r.figure_rot = turn @ r.figure_rot
+            else:
+                r.figure_rot, r.head_cell = IDENTITY, nxt.split_positions[0]
+                r.cube_rots = {"head": IDENTITY, "body": IDENTITY}
+            return
+        head = r.head_cell or before.split_positions[0]
+        kind = "head" if head == move.cube else "body"
+        r.cube_rots = {**r.cube_rots, kind: turn @ r.cube_rots[kind]}
+        if head == move.cube:
+            dr, dc = DIR_DELTA[move.action]
+            head = (head[0] + dr, head[1] + dc)
+        if nxt.split_positions is None:   # vừa ghép: đầu nằm về phía cube đầu
+            other = next(cell for cell in nxt.occupied_cells if cell != head)
+            r.figure_rot, r.head_cell = merged_rotation(head, other), None
         else:
-            head = self.renderer.head_cell or self.state.split_positions[0]
-            if head == move.cube:
-                dr, dc = DIR_DELTA[move.action]
-                head = (head[0] + dr, head[1] + dc)
-            self.renderer.head_cell = head
+            r.head_cell = head
 
     def clear_solution(self) -> None:
         self.sol_actions: Optional[List[Action]] = None
@@ -218,11 +237,8 @@ class PlaySession:
         self.state, self.moves = self.sol_states[self.sol_idx], self.sol_moves[self.sol_idx]
         mv = self.sol_actions[self.sol_idx]      # the move we just undid
         self._set_selected(mv.cube if self.state.split_positions is not None else None)
-        head = self.renderer.head_cell           # đi lùi: phần đầu cũng lùi theo cube vừa hoàn tác
-        if self.state.split_positions is None or old.split_positions is None:
-            self.renderer.head_cell = None
-        elif mv.cube is not None and head == (mv.cube[0] + DIR_DELTA[mv.action][0], mv.cube[1] + DIR_DELTA[mv.action][1]):
-            self.renderer.head_cell = mv.cube
+        if self.fig_history:
+            self.renderer.figure_rot, self.renderer.head_cell, self.renderer.cube_rots = self.fig_history.pop()
         if self.state.bridge_mask != old.bridge_mask:  # same handling as in update()
             self.renderer.prepare(self.state.bridge_mask)
             self.flips.start(old.bridge_mask, self.state.bridge_mask)
@@ -282,7 +298,8 @@ class App:
         self.stages = discover_stages()
         self.scene = "menu"  # menu | select | credits | play
         self.main_menu = Menu(["New Game", "Load Stage", "Tutorial", "Credits", "Quit"])       
-        self.pause_menu = Menu(["Resume", "Tutorial", "Quit to Menu"])
+        self.pause_menu = Menu(["Resume", "Select Stage", "Tutorial", "Quit to Menu"])
+        self.select_return = "menu"        # màn chọn stage thoát về đâu: "menu" | "play" (menu Pause)
         self.tutorial_return = "menu"      # "newgame" | "menu" | "play"
         self.tutorial_seen = False         # auto-show only once per launch
         self.end_menu = Menu([])
@@ -300,6 +317,8 @@ class App:
         self.solvers: Dict[str, Solver] = {}
         self.btn_pause = Button("", icon="pause", cord=0)
         self.btn_restart = Button("Restart")
+        self.camera = Camera()
+        self._camera_idle = 0.0
         self.btn_replay = Button("Pause")
         self.btn_prev = Button("< Prev")
         self.btn_next = Button("Next >")
@@ -338,7 +357,7 @@ class App:
     def _panel_scale(self) -> float:
         """Hệ số theo cửa sổ: =1 ở ~1536x864 (80% màn 1920x1080), kẹp trong [0.6, 1.5]."""
         w, h = self.screen.get_size()
-        return max(0.6, min(1.5, min(w / 1536, h / 864)))
+        return max(0.6, min(1.3, min(w / 1280, h / PANEL_BASE_H)))
 
     def _panel_w(self) -> int:
         return int(PANEL_BASE_W * self._panel_scale())
@@ -388,7 +407,9 @@ class App:
             self.toast(f"Không nạp được stage {index + 1}: {exc}", 4000)
             self.scene = "menu"
             return
-        self.session = PlaySession(board, Renderer(board, self.board_area()), index)
+        renderer = Renderer(board, self.board_area(), camera=self.camera)
+        renderer.water_pass = self.background.draw_water
+        self.session = PlaySession(board, renderer, index)
         self.session.start_intro()
         self.select_index = index
         self.scene, self.paused, self._end_status = "play", False, "playing"
@@ -434,7 +455,8 @@ class App:
         self.solving, self.toast_ms = None, 0.0
         self.solve_buttons[name].status = None
         s = self.session
-        in_game = self.scene == "play" or (self.scene == "tutorial" and self.tutorial_return == "play")
+        in_game = (self.scene == "play" or (self.scene == "tutorial" and self.tutorial_return == "play")
+                   or (self.scene == "select" and self.select_return == "play"))
         if not in_game or s is None or s.status != "playing" or s.state != start:
             return
         if err is not None:
@@ -471,10 +493,10 @@ class App:
             self.restart(keep_solver_ui=True)
             self.solve_done = True
             if self.last_stats:
-                self.toast(f"{self.last_stats[0]} đã đưa Vô Diện qua cổng Torii ({moves} bước)", 3000)
+                self.toast(f"{self.last_stats[0]} đã đưa Vô Diện về đích ({moves} bước)", 3000)
         elif index + 1 < len(self.stages):
             self.start_stage(index + 1)
-            self.toast(f"Vô Diện đã qua cổng Torii màn {index + 1} ({moves} bước)", 3000)
+            self.toast(f"Vô Diện đã về đích màn {index + 1} ({moves} bước)", 3000)
         else:
             self.end_menu.set_items(["Restart", "Quit to Menu"])  # final stage: overlay stays
 
@@ -528,7 +550,7 @@ class App:
             if not self._open_tutorial("menu"):
                 self.toast(self.tutorial.error, 4000)
         elif choice == "Load Stage":
-            self.scene = "select"
+            self.scene, self.select_return = "select", "menu"
         elif choice == "Credits":
             self.scene, self.credits_y = "credits", float(self.screen.get_height())
         elif choice == "Quit":
@@ -546,7 +568,7 @@ class App:
             elif e.key in (pygame.K_RETURN, pygame.K_KP_ENTER) and n:
                 self.start_stage(self.select_index)
             elif e.key == pygame.K_ESCAPE:
-                self.scene = "menu"
+                self.scene = self.select_return   # self.paused vẫn True nên quay lại đúng menu Pause
         elif e.type == pygame.MOUSEMOTION:
             page = self.select_index // PAGE_SIZE
             for slot, r in enumerate(rects):
@@ -563,13 +585,33 @@ class App:
                     if r.collidepoint(e.pos) and page * PAGE_SIZE + slot < n:
                         self.start_stage(page * PAGE_SIZE + slot)
 
+    def _camera_event(self, e) -> bool:
+        """Lăn chuột: zoom. C hoặc Home: về cỡ mặc định. Trả về True nếu đã xử lý sự kiện.
+        Chỉ đổi Camera, không chạm vào session hay solver."""
+        if self.paused or self.session.status != "playing":
+            return False
+        if e.type == pygame.MOUSEWHEEL and self._in_board_area(pygame.mouse.get_pos()):
+            self.camera.zoom_by(e.y)
+            return True
+        if e.type == pygame.KEYDOWN and e.key in (pygame.K_c, pygame.K_HOME):
+            self.camera.reset()
+            return True
+        return False
+
+    def _in_board_area(self, pos) -> bool:
+        return self.board_area().collidepoint(pos)
+
     def _event_play(self, e) -> None:
         """Handle event khi đang chơi"""
         s = self.session
+        if self._camera_event(e):
+            return
         if self.paused:
             choice = self.pause_menu.handle(e)
             if choice == "Resume" or (e.type == pygame.KEYDOWN and e.key == pygame.K_ESCAPE):
                 self.paused = False
+            elif choice == "Select Stage":
+                self.scene, self.select_return, self.select_index = "select", "play", s.index
             elif choice == "Tutorial":
                 if not self._open_tutorial("play"):
                     self.toast(self.tutorial.error, 4000)
@@ -624,6 +666,7 @@ class App:
                 self.session.renderer.set_area(self.board_area())
         self.toast_ms = max(0.0, self.toast_ms - dt)
         self.background.update(dt)
+        self._sync_camera(dt)
         self._poll_solver()
 
         if self.scene == "credits":
@@ -639,11 +682,30 @@ class App:
             if s.status != "playing":
                 self._on_game_over()
 
+    def _sync_camera(self, dt: float) -> None:
+        """Đang zoom: renderer vẽ chế độ nhanh. Ngừng một nhịp ngắn: dựng lại hình chất lượng cao."""
+        if self.scene != "play" or self.session is None:
+            return
+        r = self.session.renderer
+        if r.camera_version != self.camera.version:
+            r.apply_camera()
+            r.fast, self._camera_idle = True, 0.0
+        elif r.fast:
+            self._camera_idle += dt
+            if self._camera_idle >= CAMERA_SETTLE_MS:
+                r.fast = False
+                r.prepare_view(self.session.state.bridge_mask)
+        else:
+            r.warm_sprites(self.session.state.bridge_mask)
+
     # ------------------------------------------------------------------ draw
     def draw(self) -> None:
         """Chọn cảnh để vẽ"""
         surf = self.screen
-        self.background.draw(surf)
+        if self.scene == "play":
+            self.background.draw_under(surf)   # phần còn lại của nền do renderer gọi, sau lớp dưới nước
+        else:
+            self.background.draw(surf)
         w, h = surf.get_size()
         if self.scene == "menu":
             self._draw_main_menu(surf)
@@ -656,6 +718,7 @@ class App:
         elif self.scene == "play":
             self.session.draw(surf)
             self._draw_hud(surf)
+            self._draw_view_hint(surf)
             self._draw_win_banner(surf)
             if self.paused:
                 self._draw_overlay(surf, "Paused", COLORS["text"], "", self.pause_menu)
@@ -675,8 +738,8 @@ class App:
         k = min(1.0, h / 864)
         cx, top = w // 2, h // 2 - int(330 * k)
         draw_divider(surf, cx, top + int(16 * k), int(640 * k) // 20 * 20)
-        draw_title(surf, "Bloxorz", int(118 * k), center=(cx, top + int(100 * k)))
-        draw_title(surf, "Solver", int(70 * k), color=COLORS["accent"], center=(cx, top + int(192 * k)))
+        draw_title(surf, "Bloxorz", int(118 * k), color=COLORS["ink"], center=(cx, top + int(100 * k)))
+        draw_title(surf, "Solver", int(70 * k), color=COLORS["ink"], center=(cx, top + int(192 * k)))
         draw_divider(surf, cx, top + int(246 * k), int(560 * k) // 20 * 20, flip=True)
         self.main_menu.draw(surf, cx, top + int(290 * k), k)
         mascot = mascot_sprite(int(300 * k))
@@ -684,16 +747,16 @@ class App:
         for i in (2, 1, 0):  # gợn nước quanh chân, Vô Diện như đứng trên mặt hồ
             ring = pygame.Rect(0, 0, int((230 + i * 70) * k), int((30 + i * 14) * k))
             ring.center = (mx, foot - int(2 * k))
-            pygame.draw.ellipse(surf, tuple(int(v * (1 - i * 0.3)) for v in (72, 100, 138)), ring, 1)
+            pygame.draw.ellipse(surf, tuple(int(v * (1 - i * 0.3)) for v in (60, 120, 124)), ring, 1)
         bob = int(4 * k * math.sin(pygame.time.get_ticks() / 900))
         surf.blit(mascot, mascot.get_rect(midbottom=(mx, foot + bob)))
 
     def _draw_win_banner(self, surf: pygame.Surface) -> None:
-        """Thông báo chiến thắng ngay khi Vô Diện vào cổng (trong lúc animation thắng đang chạy)."""
+        """Thông báo chiến thắng ngay khi Vô Diện vào hố (trong lúc animation thắng đang chạy)."""
         s = self.session
         if not (s.pending and s.pending[1] == "won" and s.anim is not None):
             return
-        text = "Vô Diện đã bước qua cổng Torii!"
+        text = "Vô Diện đã về đích!"
         cx = self.board_area().centerx
         r = font(30, True).render(text, True, COLORS["text"]).get_rect(center=(cx, HUD_H + 44))
         plate = r.inflate(84, 30)
@@ -714,10 +777,12 @@ class App:
         cord = top - HUD_ROPE_Y
         self.btn_pause.rect = pygame.Rect(14, top, 44, bh)
         x = right - 14
+        info = pygame.Rect(66, top, 224, bh)    # bảng Stage/Moves bên trái; nút chia đều phần còn lại
+        bw = max(56, min(100, (right - 14 - info.right - 8 * len(self.hud_buttons)) // len(self.hud_buttons)))
         for b in reversed(self.hud_buttons):
-            x -= 100
-            b.rect = pygame.Rect(x, top, 100, bh)
-            x -= 10
+            x -= bw
+            b.rect = pygame.Rect(x, top, bw, bh)
+            x -= 8
         for b in (self.btn_pause, *self.hud_buttons):
             b.cord = cord
             b.draw(surf)
@@ -725,11 +790,14 @@ class App:
 
         self.btn_stage_prev.enabled = s.index > 0
         self.btn_stage_next.enabled = s.index + 1 < len(self.stages)
-        info = pygame.Rect(70, top, 250, bh)
+        self.hud_info_rect = info
         draw_ema(surf, info, COLORS["wood"], COLORS["wood_edge"], cord)
-        r = draw_text(surf, f"Stage {s.index + 1}", 22, COLORS["text"], bold=True,
-                      midleft=(info.x + 16, info.centery + 3))
-        draw_text(surf, f"Moves: {s.moves}", 20, COLORS["accent"], midleft=(r.right + 24, info.centery + 3))
+        r = draw_text(surf, f"Stage {s.index + 1}", 21, COLORS["text"], bold=True,
+                      midleft=(info.x + 12, info.centery + 2))
+        draw_text(surf, f"Moves: {s.moves}", 19, COLORS["accent"], midleft=(r.right + 16, info.centery + 2))
+
+    def _draw_view_hint(self, surf: pygame.Surface) -> None:
+        draw_text(surf, "Wheel: zoom  |  C: reset zoom", 15, COLORS["ink_soft"], bottomleft=(14, surf.get_height() - 10))
 
     def _draw_overlay(self, surf, title, color, subtitle, menu: Menu, mascot: bool = False) -> None:
         w, h = surf.get_size()
@@ -751,18 +819,18 @@ class App:
         w, h = surf.get_size()
         y = self.credits_y
         draw_divider(surf, w // 2, y, 600)
-        draw_text(surf, "Bloxorz Solver", 60, COLORS["accent"], bold=True, midtop=(w // 2, y + 40))
-        draw_text(surf, "CSC14003 - Introduction to Artificial Intelligence", 35, COLORS["muted"],
+        draw_text(surf, "Bloxorz Solver", 60, COLORS["ink"], bold=True, midtop=(w // 2, y + 40))
+        draw_text(surf, "CSC14003 - Introduction to Artificial Intelligence", 35, COLORS["ink_soft"],
                   midtop=(w // 2, y + 104))
         draw_divider(surf, w // 2, y + 180, 350, flip=True)
 
         y += 240
         for name, (line1, line2) in CREDITS:
-            draw_text(surf, name, 40, COLORS["text"], bold=True, midtop=(w // 2, y))
-            draw_text(surf, line1, 25, COLORS["muted"], midtop=(w // 2, y + 70))
-            draw_text(surf, line2, 25, COLORS["muted"], midtop=(w // 2, y + 130))
+            draw_text(surf, name, 40, COLORS["ink"], bold=True, midtop=(w // 2, y))
+            draw_text(surf, line1, 25, COLORS["ink_soft"], midtop=(w // 2, y + 70))
+            draw_text(surf, line2, 25, COLORS["ink_soft"], midtop=(w // 2, y + 130))
             y += 260
-        draw_text(surf, "Esc: back", 18, COLORS["muted"], bottomright=(w - 16, h - 12))
+        draw_text(surf, "Esc: back", 18, COLORS["ink_soft"], bottomright=(w - 16, h - 12))
 
     @staticmethod
     def _describe_state(st: Optional[State]) -> str:
@@ -773,116 +841,113 @@ class App:
             return f"split {cells}"
         return f"{cells} standing" if len(st.occupied_cells) == 1 else f"{cells} lying"
 
-    def _panel_title(self, surf, x, y, text, s) -> None:
+    def _panel_title(self, surf, x, y, pw, text, s) -> int:
+        """Đầu một nhóm chức năng, có đường kẻ ngăn nhóm. Trả về y bắt đầu nội dung của nhóm."""
         fl = flower_sprite(max(5, int(9 * s)))
-        surf.blit(fl, fl.get_rect(center=(x + int(9 * s), y + int(9 * s))))
-        draw_text(surf, text, max(10, int(22 * s)), COLORS["text"], bold=True,
-                midleft=(x + int(24 * s), y + int(9 * s)))
+        h = int(28 * s)
+        surf.blit(fl, fl.get_rect(center=(x + int(9 * s), y + h // 2)))
+        draw_text(surf, text, max(13, int(21 * s)), COLORS["text"], bold=True, midleft=(x + int(26 * s), y + h // 2))
+        pygame.draw.line(surf, COLORS["border"], (x, y + h + int(3 * s)), (x + pw, y + h + int(3 * s)), 1)
+        return y + h + int(14 * s)
 
     def _panel_row(self, surf, x, y, pw, s, label, value) -> None:
-        row = pygame.Rect(x, y, pw, int(30 * s))
-        pygame.draw.rect(surf, COLORS["panel"], row, border_radius=int(6 * s))
-        draw_text(surf, label, max(9, int(18 * s)), COLORS["accent"],
-                midleft=(row.x + int(10 * s), row.centery))
-        draw_text(surf, value, max(10, int(19 * s)), COLORS["text"], bold=True,
-                midright=(row.right - int(10 * s), row.centery))
+        row = pygame.Rect(x, y, pw, int(32 * s))
+        pygame.draw.rect(surf, COLORS["panel"], row)
+        draw_text(surf, label, max(12, int(18 * s)), COLORS["accent"], midleft=(row.x + int(12 * s), row.centery))
+        size = max(12, int(19 * s))
+        while size > 10 and font(size, True).size(value)[0] > pw * 0.56:  # chuỗi dài (vd start state) không đè nhãn
+            size -= 1
+        draw_text(surf, value, size, COLORS["text"], bold=True, midright=(row.right - int(12 * s), row.centery))
 
     def _draw_metrics(self, surf: pygame.Surface) -> None:
-        """Cột SOLVER bên phải: nút solver, thông tin màn, số liệu, điều khiển replay / sau khi giải."""
+        """Cột bên phải chia 4 nhóm: chọn thuật toán, thông tin màn, kết quả, điều khiển xem lại."""
         if not self.panel_on:
             return
         s = self._panel_scale()
         w, h = surf.get_size()
         pw = self._panel_w()
-        col = pygame.Rect(w - pw - 2 * PANEL_MARGIN, 0, pw + 2 * PANEL_MARGIN, h)
+        margin = PANEL_MARGIN
+        col = pygame.Rect(w - pw - 2 * margin, 0, pw + 2 * margin, h)
 
         bg = pygame.Surface(col.size, pygame.SRCALPHA)
-        bg.fill((*COLORS["bar"], 240))
+        bg.fill((*COLORS["bar"], 245))
         surf.blit(bg, col)
         for i, c in enumerate((COLORS["wood_edge"], COLORS["wood"], COLORS["wood_edge"])):  # cột gỗ viền trái
             pygame.draw.line(surf, c, (col.x + i, 0), (col.x + i, h), 1)
 
-        x, y = col.x + PANEL_MARGIN, PANEL_MARGIN + int(14 * s)
-        row_step = int(36 * s)                      # row height + gap
-        bh, g = max(30, int(42 * s)), int(14 * s)
-        half = (pw - int(10 * s)) // 2
+        x, y = col.x + margin, int(18 * s)
+        row_step = int(40 * s)                      # cao dòng + khoảng cách dòng
+        section_gap = int(20 * s)
+        bh, g = max(30, int(46 * s)), int(14 * s)
+        half = (pw - g) // 2
         sess = self.session
         board = sess.board
 
-        draw_divider(surf, x + pw // 2, y, pw)
-        y += int(26 * s)
-
-        # --- solver buttons 2x2
-        self._panel_title(surf, x, y, "SOLVER", s)
-        y += int(38 * s)
-        pygame.draw.line(surf, COLORS["cord"], (x, y - int(4 * s)), (x + pw, y - int(4 * s)), 2)
+        # --- nhóm 1: chọn thuật toán
+        y = self._panel_title(surf, x, y, pw, "ALGORITHM", s)
         for i, b in enumerate(self.solve_buttons.values()):
-            b.rect = pygame.Rect(x + (i % 2) * (half + int(10 * s)), y + (i // 2) * (bh + g), half, bh)
-            b.cord = int(4 * s) if i < 2 else g   # hàng trên treo vào dây, hàng dưới nối từ thẻ trên
+            b.rect = pygame.Rect(x + (i % 2) * (half + g), y + (i // 2) * (bh + g), half, bh)
+            b.cord = 0
             b.draw(surf)
         y += 2 * bh + g + int(10 * s)
-
-        # --- trạng thái solver: đang chạy / hoàn thành / thất bại
         text, color = self._solver_status_text()
-        draw_text(surf, text, max(9, int(17 * s)), color, midleft=(x, y + int(6 * s)))
-        y += int(26 * s)
+        draw_text(surf, text, max(12, int(17 * s)), color, midleft=(x, y + int(10 * s)))
+        y += int(22 * s) + section_gap
 
-        # --- stage info (always)
-        self._panel_title(surf, x, y, "STAGE INFO", s)
-        y += int(38 * s)
+        # --- nhóm 2: thông tin màn
+        y = self._panel_title(surf, x, y, pw, "STAGE INFO", s)
         for label, value in (("Map size", f"{board.height} x {board.width}"),
-                            ("Goal", f"({board.goal[0]}, {board.goal[1]})")):
+                             ("Goal", f"({board.goal[0]}, {board.goal[1]})")):
             self._panel_row(surf, x, y, pw, s, label, value)
             y += row_step
-        y += int(10 * s)
+        y += section_gap - (row_step - int(32 * s))
 
-        # --- metrics
+        # --- nhóm 3: kết quả
         if self.last_stats:
             name, r = self.last_stats
             values = [f"{r.time * 1000:.2f} ms", f"{r.expanded_nodes:,}", f"{r.peak_memory / 1024:.1f} KB",
-                    f"{r.solution_length} moves" if r.is_solved else "no solution"]
+                      f"{r.solution_length} moves" if r.is_solved else "no solution"]
         elif self.solving:
             name, values = self.solving, ["..."] * 4
         else:
             return
 
-        self._panel_title(surf, x, y, f"SEARCH METRICS - {name}", s)
-        y += int(32 * s)
+        y = self._panel_title(surf, x, y, pw, f"RESULTS - {name}", s)
         labels = ("Search time", "Nodes expanded", "Memory (peak)", "Solution length")
         rows = [("Start state", self._describe_state(self.solve_start))] + list(zip(labels, values))
         for label, value in rows:
             self._panel_row(surf, x, y, pw, s, label, value)
             y += row_step
-        y += int(8 * s)
+        y += section_gap - (row_step - int(32 * s))
 
-        # --- after the metrics: replay controls, or Solve again / Next stage
+        # --- nhóm 4: xem lại lời giải, hoặc Solve again / Next stage
         if sess.has_solution:
             n = len(sess.sol_actions)
-            draw_text(surf, f"Step {sess.sol_idx} / {n}", max(10, int(22 * s)), COLORS["accent"],
-                    bold=True, midleft=(x, y + int(9 * s)))
-            y += int(26 * s)
+            y = self._panel_title(surf, x, y, pw, f"REPLAY - step {sess.sol_idx} / {n}", s)
             bar_h = max(4, int(6 * s))
-            pygame.draw.rect(surf, COLORS["accent_dark"], (x, y, pw, bar_h), border_radius=bar_h // 2)
-            pygame.draw.rect(surf, COLORS["accent"], (x, y, int(pw * sess.sol_idx / n), bar_h),
-                            border_radius=bar_h // 2)
-            y += bar_h + int(16 * s)
+            pygame.draw.rect(surf, COLORS["accent_dark"], (x, y, pw, bar_h))
+            pygame.draw.rect(surf, COLORS["accent"], (x, y, int(pw * sess.sol_idx / n), bar_h))
+            y += bar_h + int(12 * s)
 
             paused = sess.sol_paused
             self.btn_replay.label = "Resume" if paused else "Pause"
             self.btn_replay.enabled = True
             self.btn_prev.enabled = paused and sess.sol_idx > 0
             self.btn_next.enabled = paused and sess.sol_idx < n
-            self.btn_replay.rect = pygame.Rect(x, y, pw, bh)
-            self.btn_prev.rect = pygame.Rect(x, y + bh + g, half, bh)
-            self.btn_next.rect = pygame.Rect(x + half + g, y + bh + g, half, bh)
+            third = (pw - 2 * g) // 3
+            self.btn_prev.rect = pygame.Rect(x, y, third, bh)
+            self.btn_replay.rect = pygame.Rect(x + third + g, y, third, bh)
+            self.btn_next.rect = pygame.Rect(x + 2 * (third + g), y, third, bh)
             for b in self.replay_buttons:
+                b.cord = 0
                 b.draw(surf)
         elif self.solve_done:
-            self.btn_again.rect = pygame.Rect(x, y, pw, bh)
-            self.btn_to_next.rect = pygame.Rect(x, y + bh + g, pw, bh)
+            self.btn_again.rect = pygame.Rect(x, y, half, bh)
+            self.btn_to_next.rect = pygame.Rect(x + half + g, y, half, bh)
             self.btn_to_next.enabled = sess.index + 1 < len(self.stages)   # greyed on the last stage
-            self.btn_again.draw(surf)
-            self.btn_to_next.draw(surf)
+            for b in (self.btn_again, self.btn_to_next):
+                b.cord = 0
+                b.draw(surf)
 
     def _solver_status_text(self) -> Tuple[str, Tuple[int, int, int]]:
         if self.solving:
@@ -933,6 +998,9 @@ class App:
         w, h = surf.get_size()
         n = len(self.stages)
         page, pages = self.select_index // PAGE_SIZE, max(1, math.ceil(n / PAGE_SIZE))
+        dim = pygame.Surface((w, h), pygame.SRCALPHA)
+        dim.fill((*COLORS["dim"], 200))   # cùng độ mờ với Tutorial: tách các ô stage khỏi nền
+        surf.blit(dim, (0, 0))
         draw_text(surf, "Select Stage", 40, COLORS["text"], bold=True, center=(w // 2, 80))
         draw_divider(surf, w // 2, 120, 340, flip=True)
 
@@ -951,7 +1019,7 @@ class App:
             if idx >= n:  # ô trống: cùng kích thước với card thật
                 empty = pygame.Rect(0, 0, *ref) if ref else r.copy()
                 empty.midtop = (r.centerx, r.y)
-                pygame.draw.rect(surf, COLORS["panel"], empty, 1, border_radius=6)
+                pygame.draw.rect(surf, COLORS["panel"], empty, 1, border_radius=0)
                 continue
             sel = idx == self.select_index
             thumb = self._thumb(idx, (max(1, r.w - 12), max(1, r.h - 48)))
@@ -965,7 +1033,7 @@ class App:
                 card = r
                 draw_text(surf, f"Stage {idx + 1}", 26, COLORS["accent"] if sel else COLORS["muted"],
                           bold=sel, center=card.center)
-            pygame.draw.rect(surf, COLORS["accent"] if sel else COLORS["border"], card, 3 if sel else 2, border_radius=6)
+            pygame.draw.rect(surf, COLORS["accent"] if sel else COLORS["border"], card, 3 if sel else 2, border_radius=0)
 
         # mũi tên chuyển page, text hướng dẫn manuver trong menu
         for rect, glyph, ok in zip(self._arrow_rects(), ("left", "right"), (page > 0, page < pages - 1)):

@@ -1,0 +1,17 @@
+# props.mtl - sinh bởi make_assets.py
+newmtl torii_red
+Kd 0.7216 0.3451 0.2667
+d 1.000
+illum 2
+map_Kd ../textures/torii_wood.png
+
+newmtl torii_dark
+Kd 0.4471 0.2118 0.1647
+d 1.000
+illum 2
+map_Kd ../textures/torii_wood.png
+
+newmtl torii_cap
+Kd 0.3059 0.2431 0.2118
+d 1.000
+illum 2

@@ -4,9 +4,9 @@
     {
       "text": [
         "Roll No-Face with the arrow keys or WASD.",
-        "Stand upright in front of the Torii gate, on its swirling light, to clear the stage.",
-        "The stone lantern marks where you start.",
-        "Be careful not to fall into the lake!"
+        "Stand upright on the swirling hole to clear the stage.",
+        "Be careful not to fall into the lake!",
+        "Scroll to zoom, press C to reset the zoom."
       ],
       "image": "01_basics.png"
     },

@@ -29,9 +29,11 @@ def render_thumbnail(board: Board) -> pygame.Surface:
     """Nền theme + bàn chơi + khối ở vị trí xuất phát, co vừa khung (cả màn nhỏ lẫn màn lớn)."""
     w, h = THUMB_SIZE
     surf = pygame.Surface((w, h))
-    Background((w, h)).draw(surf)
+    bg = Background((w, h))
+    bg.draw_under(surf)
     # tile_width rất lớn => Renderer luôn co/giãn bàn chơi cho vừa khung thay vì giữ cỡ tối đa 64px
     renderer = Renderer(board, pygame.Rect(PAD, PAD, w - 2 * PAD, h - 2 * PAD), tile_width=1000.0)
+    renderer.water_pass = bg.draw_water
     renderer.draw(surf, board.initial_state)
     return surf
 

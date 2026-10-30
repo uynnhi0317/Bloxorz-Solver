@@ -9,7 +9,7 @@ import numpy as np
 import pygame
 
 from game import Action
-from .theme import SERIF, UI, flower_sprite, sakura_points
+from .theme import CREAM, SAKURA_DEEP, SAKURA_LIGHT, SERIF, UI, flower_sprite, sakura_points
 
 COLORS = UI
 
@@ -68,7 +68,7 @@ _GLOW: Dict[tuple, pygame.Surface] = {}
 
 
 def draw_title(surface: pygame.Surface, text: str, size: int, color=COLORS["text"],
-               glow_color=(229, 143, 166), **anchor) -> pygame.Rect:
+               glow_color=CREAM, **anchor) -> pygame.Rect:
     """Tiêu đề small caps có quầng sáng (làm mờ bằng scale xuống rồi lên)."""
     key = (text, size, tuple(color), tuple(glow_color))
     if key not in _GLOW:
@@ -78,6 +78,7 @@ def draw_title(surface: pygame.Surface, text: str, size: int, color=COLORS["text
         canvas.blit(base, (pad, pad))
         w, h = canvas.get_size()
         glow = pygame.transform.smoothscale(pygame.transform.smoothscale(canvas, (max(1, w // 7), max(1, h // 7))), (w, h))
+        glow.fill((255, 255, 255, 0), special_flags=pygame.BLEND_RGBA_ADD)   # chỉ giữ hình dạng, không giữ màu chữ
         glow.fill((*glow_color, 255), special_flags=pygame.BLEND_RGBA_MULT)
         out = pygame.Surface((w, h), pygame.SRCALPHA)
         out.blit(glow, (0, 0))
@@ -121,7 +122,7 @@ def _ornament(width: int, color) -> Tuple[pygame.Surface, int]:
         del a
         for i in range(5):
             pygame.draw.polygon(layer, (*color, 255), sakura_points(cx, cy, 14 * S, i))
-        pygame.draw.circle(layer, (229, 143, 166, 255), (cx, cy), 3 * S)
+        pygame.draw.circle(layer, (*SAKURA_DEEP, 255), (cx, cy), 3 * S)
         for off in (-27, 27):
             pygame.draw.circle(layer, (*color, 255), (cx + off * S, cy), int(2.6 * S))
         base = pygame.transform.smoothscale(layer, (width, h))
@@ -130,7 +131,7 @@ def _ornament(width: int, color) -> Tuple[pygame.Surface, int]:
         canvas.blit(base, (pad, pad))
         cw, ch = canvas.get_size()
         glow = pygame.transform.smoothscale(pygame.transform.smoothscale(canvas, (max(1, cw // 4), max(1, ch // 4))), (cw, ch))
-        glow.fill((229, 143, 166, 255), special_flags=pygame.BLEND_RGBA_MULT)
+        glow.fill((*SAKURA_DEEP, 255), special_flags=pygame.BLEND_RGBA_MULT)
         out = pygame.Surface((cw, ch), pygame.SRCALPHA)
         out.blit(glow, (0, 0))
         out.blit(canvas, (0, 0))
@@ -138,7 +139,7 @@ def _ornament(width: int, color) -> Tuple[pygame.Surface, int]:
     return _ORN[key]
 
 
-def draw_divider(surface: pygame.Surface, center_x: int, line_y: int, width: int, color=(247, 198, 208),
+def draw_divider(surface: pygame.Surface, center_x: int, line_y: int, width: int, color=SAKURA_LIGHT,
                  flip: bool = False) -> None:
     """Vẽ dải trang trí tại đường kẻ y=line_y. flip=True: lật dọc (dùng cho phía dưới tiêu đề)."""
     img, ly = _ornament(width, color)
@@ -158,8 +159,8 @@ def ema_board(w: int, h: int, fill, edge, accent=None, seed: int = 3) -> pygame.
     if key not in _EMA:
         S = 3
         W, H = w * S, h * S
-        roof = min(H * 0.26, W * 0.10)   # phần vát hai góc trên
-        shape = [(0, roof), (W * 0.5 - W * 0.16, 0), (W * 0.5 + W * 0.16, 0), (W - 1, roof), (W - 1, H - 1), (0, H - 1)]
+        roof = min(H * 0.14, W * 0.05)   # vát nhẹ hai góc trên: vẫn là thẻ Ema nhưng vuông vức
+        shape = [(0, roof), (roof, 0), (W - 1 - roof, 0), (W - 1, roof), (W - 1, H - 1), (0, H - 1)]
         mask = pygame.Surface((W, H), pygame.SRCALPHA)
         pygame.draw.polygon(mask, (255, 255, 255, 255), shape)
         wood = pygame.Surface((W, H), pygame.SRCALPHA)
@@ -176,7 +177,7 @@ def ema_board(w: int, h: int, fill, edge, accent=None, seed: int = 3) -> pygame.
             pygame.draw.rect(wood, accent, (0, H - band, W, band))
         wood.blit(mask, (0, 0), special_flags=pygame.BLEND_RGBA_MULT)
         pygame.draw.polygon(wood, edge, shape, max(2, int(1.4 * S)))
-        hole = (W // 2, int(roof * 0.5) + S)
+        hole = (W // 2, int(roof * 0.5) + 2 * S)
         pygame.draw.circle(wood, (34, 22, 16), hole, max(2, int(1.6 * S)))
         _EMA[key] = pygame.transform.smoothscale(wood, (w, h))
     return _EMA[key]
@@ -198,7 +199,7 @@ def _fit_size(text: str, base: int, max_w: int) -> int:
 
 
 def _status_icon(surface: pygame.Surface, status: str, x: int, y: int, r: int) -> None:
-    """Biểu tượng trạng thái solver: vòng quay (đang chạy), dấu tick (xong), dấu X (thất bại)."""
+    """Biểu tượng trạng thái solver: vòng quay (đang chạy), dấu X (thất bại)."""
     if status == "running":
         spin = pygame.time.get_ticks() / 140
         for i in range(6):
@@ -206,9 +207,6 @@ def _status_icon(surface: pygame.Surface, status: str, x: int, y: int, r: int) -
             lvl = 0.35 + 0.65 * i / 5
             col = tuple(int(v * lvl) for v in COLORS["text"])
             pygame.draw.circle(surface, col, (x + r * math.cos(a), y + r * math.sin(a)), max(1, r // 4))
-    elif status == "done":
-        pygame.draw.circle(surface, (30, 44, 26), (x, y), r + 2)
-        pygame.draw.lines(surface, COLORS["ok"], False, [(x - r * 0.6, y), (x - r * 0.1, y + r * 0.55), (x + r * 0.65, y - r * 0.55)], 2)
     elif status == "failed":
         pygame.draw.circle(surface, (56, 20, 22), (x, y), r + 2)
         d = r * 0.55

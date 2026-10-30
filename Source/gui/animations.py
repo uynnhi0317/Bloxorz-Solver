@@ -38,17 +38,23 @@ class Animation:
         raise NotImplementedError
 
 
-def _aligned_box(box: Box, verts: np.ndarray) -> Box:
-    """Box nằm thẳng theo lưới ở vị trí `verts`, với tư thế hình Vô Diện đúng cho trạng thái mới."""
-    lo, hi = verts.min(axis=0), verts.max(axis=0)
-    d = hi - lo
-    pose = "standing" if d[2] > 1.5 else "horizontal" if d[1] > 1.5 else "vertical" if d[0] > 1.5 else "standing"
-    return replace(box, verts=make_box(lo[0], lo[1], lo[2], d[0], d[1], d[2]), pose=pose, fade=1.0)
+def roll_matrix(action: Action) -> np.ndarray:
+    """Phép xoay 90 độ của một cú lăn, lấy từ chính hàm rotate() nên khớp tuyệt đối với animation."""
+    axis, sign = DIR_AXIS[action]
+    v = np.round(rotate(make_box(0, 0, 0, 1, 1, 1), axis, sign, math.pi / 2, 0.0))
+    return np.stack([v[4] - v[0], v[2] - v[0], v[1] - v[0]], axis=1)
+
+
+def merged_rotation(head: Coord, other: Coord) -> np.ndarray:
+    """Hướng của khối nguyên khi hai cube ghép lại: đầu ở phía cube đầu, mặt ngửa lên."""
+    up = np.array((head[0] - other[0], head[1] - other[1], 0.0))
+    face = np.array((0.0, 0.0, 1.0))
+    return np.stack([face, np.cross(up, face), up], axis=1)
 
 
 class RollAnimation(Animation):
-    """Animation lăn cho cả khối, hay phần nửa khối đang active nếu đang trong trạng thái tách.
-    Nửa đầu cú lăn: hình theo tư thế cũ; nửa sau: theo tư thế mới. Mặt nạ mờ đi đúng lúc đổi tư thế."""
+    """Animation lăn cho cả khối, hay cube đang active nếu đang trong trạng thái tách:
+    xoay cứng quanh cạnh đáy, hình Vô Diện đi theo khối từ đầu đến cuối, không đổi tư thế giữa chừng."""
 
     def __init__(self, renderer: Renderer, before: State, action: Action,
                  moving: int = 0, duration_ms: float = 160):
@@ -58,10 +64,11 @@ class RollAnimation(Animation):
         boxes = renderer.state_boxes(before)
         self.static = [b for i, b in enumerate(boxes) if i != moving]
         self.mover = boxes[moving]
-        v = self.mover.verts
-        self.pivot = float(v[:, self.axis].max() if self.sign > 0 else v[:, self.axis].min())
-        end = np.round(rotate(v, self.axis, self.sign, math.pi / 2), 6) + 0.0
-        self.end_box = _aligned_box(self.mover, end)
+        end = np.round(rotate(self.mover.verts, self.axis, self.sign, math.pi / 2), 6) + 0.0
+        lo, hi = end.min(axis=0), end.max(axis=0)
+        d = hi - lo
+        self.end_box = replace(self.mover, verts=make_box(lo[0], lo[1], lo[2], d[0], d[1], d[2]),
+                               rot=roll_matrix(action) @ self.mover.rot)
         self.final_boxes: List[Box] = self.static + [self.end_box]
         self.t, self.duration = 0.0, duration_ms
 
@@ -69,15 +76,11 @@ class RollAnimation(Animation):
         self.t = min(1.0, self.t + dt_ms / self.duration)
         self.done = self.t >= 1.0
 
+    def current_box(self) -> Box:
+        return replace(self.mover, verts=rotate(self.mover.verts, self.axis, self.sign, ease(self.t) * math.pi / 2))
+
     def draw(self, surface) -> None:
-        theta = ease(self.t) * math.pi / 2
-        fade = min(1.0, abs(theta - math.pi / 4) / (math.pi / 8))
-        if theta < math.pi / 4:
-            box = replace(self.mover, verts=rotate(self.mover.verts, self.axis, self.sign, theta), fade=fade)
-        else:
-            box = replace(self.end_box, fade=fade,
-                          verts=rotate(self.end_box.verts, self.axis, self.sign, theta - math.pi / 2, self.pivot))
-        self.r.draw_scene(surface, self.mask, self.static + [box])
+        self.r.draw_scene(surface, self.mask, self.static + [self.current_box()])
 
 
 class TumbleAnimation(Animation):
@@ -509,7 +512,7 @@ def animate_fall(renderer: Renderer, before: State, action: Optional[Action] = N
 
 
 class WinAnimation(Animation):
-    """Thắng: cổng torii sáng dần, xoáy sáng bùng lên, Vô Diện chìm dần vào tâm cổng rồi tan đi.
+    """Thắng: xoáy sáng trong hố bùng lên, Vô Diện chìm dần vào tâm hố rồi tan đi.
     Chỉ là hình ảnh: điều kiện thắng vẫn do is_goal quyết định trước khi animation này được tạo."""
 
     def __init__(self, renderer: Renderer, state: State, duration_ms: float = 1250):
@@ -540,5 +543,5 @@ class WinAnimation(Animation):
 
 
 def animate_win(renderer: Renderer, state: State) -> Animation:
-    """Block sinks into the torii gate."""
+    """Block sinks into the goal hole."""
     return WinAnimation(renderer, state)

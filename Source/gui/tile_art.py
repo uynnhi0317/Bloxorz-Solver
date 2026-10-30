@@ -60,27 +60,73 @@ def floor(paint, r: int, c: int, z: float = 0.002) -> None:
         paint.poly(_blob(rng, r + corner[0], c + corner[1], rad, lo, hi), col, z + 0.001)
 
 
+def _scaled(col, k: float) -> Tuple[int, int, int]:
+    return tuple(min(255, max(0, int(v * k))) for v in col)
+
+
+def _leaf(paint, rng: random.Random, r: int, c: int, cr: float, cc: float, ln: float, col, z: float, detail: int) -> None:
+    """Một chiếc lá khô: gân giữa hơi cong chia lá thành nửa sáng nửa tối, đầu lá nhọn, gốc lá rộng hơn.
+    detail: 0 = chỉ hình lá, 1 = thêm bóng đổ và gân giữa, 2 = thêm cuống và gân phụ."""
+    ang = rng.uniform(0, 2 * math.pi)
+    ca, sa = math.cos(ang), math.sin(ang)
+    wd = ln * rng.uniform(0.42, 0.56)
+    bend = ln * rng.uniform(-0.28, 0.28)
+    lit = 1.1 if math.sin(ang) > 0 else 0.84   # nửa lá hướng về phía đèn sáng hơn, như lá hơi gập theo gân
+
+    def world(along: float, across: float) -> Point:
+        pr, pc = along * ln, across + bend * (along * along - 0.33)
+        return (min(r + 0.985, max(r + 0.015, cr + pr * ca - pc * sa)),
+                min(c + 0.985, max(c + 0.015, cc + pr * sa + pc * ca)))
+
+    ts = [-1 + 2 * i / 8 for i in range(9)]
+    half_w = [wd * (1 - t * t) ** 0.8 * (1 - 0.3 * t) for t in ts]
+    rib = [world(t, 0.0) for t in ts]
+    left = [world(t, h) for t, h in zip(ts, half_w)]
+    right = [world(t, -h) for t, h in zip(ts, half_w)]
+    if detail:
+        shadow = [(a + 0.012, b + 0.008) for a, b in left + right[::-1]]
+        paint.poly(shadow, _scaled(PALETTE["fragile"], 0.48), z)
+    paint.poly(left + rib[::-1], _scaled(col, lit), z + 0.0001)
+    paint.poly(right + rib[::-1], _scaled(col, 2.0 - lit - 0.06), z + 0.0001)
+    if not detail:
+        return
+    vein = _scaled(col, 0.62)
+    for p, q in zip(rib[::2], rib[2::2]):
+        paint.line(p, q, vein, 1, z + 0.0002)
+    if detail < 2:
+        return
+    paint.line(world(-1.0, 0.0), world(-1.28, 0.0), _scaled(col, 0.5), 1, z + 0.0002)   # cuống lá
+    for t in (-0.45, 0.0, 0.45):
+        h = wd * (1 - t * t) ** 0.8 * (1 - 0.3 * t) * 0.78
+        for side in (-1, 1):
+            paint.line(world(t, 0.0), world(t + 0.3, side * h), _scaled(col, 0.76), 1, z + 0.0002)
+
+
 def fragile(paint, r: int, c: int, z: float = 0.003) -> None:
-    """Đống lá cam vàng: lá phủ kín mặt ô, rất khác màu đá nên nhận ra ngay cả khi ô nhỏ."""
+    """Đống lá khô: lớp dưới tối và lớp trên có gân, bóng đổ; rất khác màu đá nên nhận ra ngay cả khi ô nhỏ."""
     rng = _rng(r, c)
     leaves = PALETTE["leaves"]
-    for i in range(22):
-        cr, cc = r + rng.uniform(0.1, 0.9), c + rng.uniform(0.1, 0.9)
-        ang, ln, wd = rng.uniform(0, math.pi), rng.uniform(0.09, 0.15), rng.uniform(0.04, 0.07)
-        ca, sa = math.cos(ang), math.sin(ang)
-        col = leaves[i % len(leaves)]
-        pts = []
-        for along, across in ((-1, 0), (-0.3, 1), (0.4, 0.85), (1, 0), (0.4, -0.85), (-0.3, -1)):
-            pr, pc = along * ln, across * wd
-            pts.append((min(r + 0.97, max(r + 0.03, cr + pr * ca - pc * sa)),
-                        min(c + 0.97, max(c + 0.03, cc + pr * sa + pc * ca))))
-        paint.poly(pts, col, z + i * 0.0005)
+    earth = _scaled(PALETTE["fragile"], 0.6)
+    paint.poly([(r + 0.02, c + 0.02), (r + 0.02, c + 0.98), (r + 0.98, c + 0.98), (r + 0.98, c + 0.02)], earth, z)
+    i = 0
+    for layer, (cells, dim, lo, hi) in enumerate(((5, 0.66, 0.13, 0.19), (4, 0.85, 0.13, 0.18), (3, 1.0, 0.14, 0.2))):
+        for a in range(cells):
+            for b in range(cells):
+                if layer == 2 and rng.random() < 0.3:
+                    continue   # chừa khe để thấy lớp lá bên dưới
+                cr = r + (a + rng.uniform(0.1, 0.9)) / cells
+                cc = c + (b + rng.uniform(0.1, 0.9)) / cells
+                jitter = rng.uniform(0.9, 1.1)
+                base = leaves[rng.randrange(len(leaves))]
+                col = (base[0] * jitter, base[1] * jitter * rng.uniform(0.93, 1.05), base[2] * jitter)
+                _leaf(paint, rng, r, c, cr, cc, rng.uniform(lo, hi), _scaled(col, dim), z + 0.001 + i * 0.0004, layer)
+                i += 1
 
 
 def goal(paint, r: int, c: int, z: float = 0.002) -> None:
-    """Mặt sân ở chân cổng torii: vòng đá + hố tối (xoáy sáng vẽ động trong renderer)."""
-    cr, cc = r + 0.56, c + 0.5
-    paint.poly(_circle(cr, cc, 0.40), PALETTE["torii_cap"], z)
+    """Hố dịch chuyển trên mặt ô đích: vành gỗ + lòng hố xanh biển sâu (xoáy sáng vẽ động trong renderer)."""
+    cr, cc = r + 0.5, c + 0.5
+    paint.poly(_circle(cr, cc, 0.40), PALETTE["goal_rim"], z)
     paint.poly(_circle(cr, cc, 0.36), PALETTE["goal_hole"], z + 0.001)
     paint.poly(_circle(cr, cc, 0.20), PALETTE["goal_inner"], z + 0.002)
 
@@ -91,11 +137,11 @@ def switch(paint, tile: Tile, r: int, c: int, active: bool, z: float = 0.002) ->
     if tile.switch_kind == SwitchKind.SOFT:
         # phiến đá tròn, khắc hoa anh đào năm cánh
         col = PALETTE["soft"] if active else PALETTE["soft_off"]
-        paint.poly(_circle(cr, cc, 0.43), (70, 66, 70), z)
-        paint.poly(_circle(cr, cc, 0.39), (120, 116, 112), z + 0.001)
+        paint.poly(_circle(cr, cc, 0.43), (124, 110, 94), z)
+        paint.poly(_circle(cr, cc, 0.39), (172, 158, 136), z + 0.001)
         for i in range(5):
             paint.poly(sakura_points(cr, cc, 0.35, i), col, z + 0.002)
-        paint.poly(_circle(cr, cc, 0.07, 12), PALETTE["bridge"] if active else (110, 74, 84), z + 0.003)
+        paint.poly(_circle(cr, cc, 0.07, 12), PALETTE["torii"] if active else (136, 106, 98), z + 0.003)
     elif tile.switch_kind == SwitchKind.HEAVY:
         # hai thanh tre bắt chéo thành dấu X, có đốt tre
         col = PALETTE["heavy"] if active else PALETTE["heavy_off"]
@@ -104,7 +150,7 @@ def switch(paint, tile: Tile, r: int, c: int, active: bool, z: float = 0.002) ->
         paint.poly([(cr - 0.42, cc - 0.42), (cr - 0.42, cc + 0.42), (cr + 0.42, cc + 0.42), (cr + 0.42, cc - 0.42)],
                    base, z)
         for a, b in (((cr - d, cc - d), (cr + d, cc + d)), ((cr - d, cc + d), (cr + d, cc - d))):
-            paint.line(a, b, (24, 34, 22), 7, z + 0.001)
+            paint.line(a, b, (72, 80, 56), 7, z + 0.001)
             paint.line(a, b, col, 5, z + 0.002)
             for t in (0.2, 0.8):
                 pr, pc = a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t
@@ -113,8 +159,8 @@ def switch(paint, tile: Tile, r: int, c: int, active: bool, z: float = 0.002) ->
     else:
         # hai vầng bát quái tách rời, ghép thành dấu ( )
         col = PALETTE["split"] if active else PALETTE["split_off"]
-        paint.poly(_circle(cr, cc, 0.44), (34, 40, 66), z)
-        paint.poly(_circle(cr, cc, 0.40), (50, 58, 90), z + 0.001)
+        paint.poly(_circle(cr, cc, 0.44), (46, 92, 96), z)
+        paint.poly(_circle(cr, cc, 0.40), (66, 122, 122), z + 0.001)
         for shift, a0, a1 in ((0.20, 140, 220), (-0.20, -40, 40)):
             for radius, width in ((0.46, 6), (0.33, 2)):  # vạch dày + vạch mảnh như quẻ bát quái
                 arc = []
@@ -125,10 +171,9 @@ def switch(paint, tile: Tile, r: int, c: int, active: bool, z: float = 0.002) ->
                     paint.line(p, q, col, width, z + 0.002)
 
 
-def bridge_ghost(paint, r: int, c: int, axis: int) -> None:
+def bridge_ghost(paint, r: int, c: int, axis: int, z: float) -> None:
     """Cầu ĐÓNG: ván chìm dưới mặt nước. Tối, không lan can, không mặt đứng,
     nên khác hẳn cả ô đi được lẫn ô Void (Void không có gì)."""
-    z = -0.42
     col = PALETTE["bridge_ghost"]
     n = 5
     for i in range(n):
