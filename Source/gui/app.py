@@ -22,6 +22,7 @@ from .controls import COLORS, KEY_ACTIONS, Button, Menu, draw_caps, draw_divider
 from .theme import Background
 from .renderer import Renderer
 from solvers import SolveResult
+from .tutorial import Tutorial
 
 SOURCE_DIR = Path(__file__).resolve().parent.parent
 STAGE_GROUPS = ("simple", "fragile", "switch", "combined")  # thứ tự tăng dần độ khó
@@ -242,8 +243,10 @@ class App:
         self.running = True
         self.stages = discover_stages()
         self.scene = "menu"  # menu | select | credits | play
-        self.main_menu = Menu(["New Game", "Load Stage", "Credits", "Quit"])
-        self.pause_menu = Menu(["Resume", "Quit to Menu"])
+        self.main_menu = Menu(["New Game", "Load Stage", "Tutorial", "Credits", "Quit"])       
+        self.pause_menu = Menu(["Resume", "Tutorial", "Quit to Menu"])
+        self.tutorial_return = "menu"      # "newgame" | "menu" | "play"
+        self.tutorial_seen = False         # auto-show only once per launch
         self.end_menu = Menu([])
         self._end_status = "playing"
         self.paused = False
@@ -254,6 +257,7 @@ class App:
         self._thumbs: Dict[Tuple[int, Tuple[int, int]], Optional[pygame.Surface]] = {}
         self._size = self.screen.get_size()
         self.background = Background(self._size)
+        self.tutorial = Tutorial() 
 
         self.solvers: Dict[str, Solver] = {}
         self.btn_pause = Button("", icon="pause")
@@ -279,6 +283,7 @@ class App:
         self.last_stats = None          # (name, result)
         self._gen = 0
         self.panel_on = False
+        self.last_label = "Finish"
 
     #-------------------------------------------------------------------
     def _set_panel(self, on: bool) -> None:
@@ -385,8 +390,10 @@ class App:
         name, start, res, err = out
         self.solving, self.toast_ms = None, 0.0
         s = self.session
-        if self.scene != "play" or s is None or s.status != "playing" or s.state != start:
-            return  # người chơi đã thoát/restart/đi tiếp: kết quả cũ, bỏ
+        s = self.session
+        in_game = self.scene == "play" or (self.scene == "tutorial" and self.tutorial_return == "play")
+        if not in_game or s is None or s.status != "playing" or s.state != start:
+            return
         if err is not None:
             self.toast(f"{name} lỗi: {err}", 4000)
             return
@@ -424,6 +431,23 @@ class App:
         else:
             self.end_menu.set_items(["Restart", "Quit to Menu"])  # final stage: overlay stays
 
+    def _open_tutorial(self, mode: str) -> bool:
+        if not self.tutorial.pages:
+            return False
+        self.tutorial_return = mode
+        self.tutorial.open(mode)
+        self.scene = "tutorial"
+        return True
+
+    def _close_tutorial(self) -> None:
+        mode = self.tutorial_return
+        if mode == "newgame":
+            self.start_stage(0)
+        elif mode == "play":
+            self.scene = "play"          # self.paused stays True -> back to the pause menu
+        else:
+            self.scene = "menu"
+
     # ------------------------------------------------------------------ event
     def handle_event(self, e: pygame.event.Event) -> None:
         """Chọn handle event phù hợp với từng scene"""
@@ -431,6 +455,9 @@ class App:
             self.running = False
         elif self.scene == "menu":
             self._event_menu(e)
+        elif self.scene == "tutorial":
+            if self.tutorial.handle(e) == "exit":
+                self._close_tutorial()
         elif self.scene == "select":
             self._event_select(e)
         elif self.scene == "credits":
@@ -444,10 +471,15 @@ class App:
         """Handle event khi ở menu chính"""
         choice = self.main_menu.handle(e)
         if choice == "New Game":
-            if self.stages:
-                self.start_stage(0)
-            else:
+            if not self.stages:
                 self.toast("Chưa có stage nào trong stages/")
+            elif not self.tutorial_seen and self._open_tutorial("newgame"):
+                self.tutorial_seen = True
+            else:
+                self.start_stage(0)
+        elif choice == "Tutorial":
+            if not self._open_tutorial("menu"):
+                self.toast(self.tutorial.error, 4000)
         elif choice == "Load Stage":
             self.scene = "select"
         elif choice == "Credits":
@@ -491,6 +523,9 @@ class App:
             choice = self.pause_menu.handle(e)
             if choice == "Resume" or (e.type == pygame.KEYDOWN and e.key == pygame.K_ESCAPE):
                 self.paused = False
+            elif choice == "Tutorial":
+                if not self._open_tutorial("play"):
+                    self.toast(self.tutorial.error, 4000)
             elif choice == "Quit to Menu":
                 self.scene = "menu"
             return
@@ -564,11 +599,13 @@ class App:
         self.background.draw(surf)
         w, h = surf.get_size()
         if self.scene == "menu":
-            draw_divider(surf, w // 2, h // 2 - 300, 720)
-            draw_title(surf, "Bloxorz", 140, center=(w // 2, h // 2 - 190))
-            draw_title(surf, "Solver", 85, color=COLORS["accent"], center=(w // 2, h // 2 - 80))
-            draw_divider(surf, w // 2, h // 2 - 10, 620, flip=True)
-            self.main_menu.draw(surf, w // 2, h // 2 + 40)  # thấp hơn một dòng so với trước (-70)
+            draw_divider(surf, w // 2, h // 2 - 320, 720)
+            draw_title(surf, "Bloxorz", 140, center=(w // 2, h // 2 - 220))
+            draw_title(surf, "Solver", 85, color=COLORS["accent"], center=(w // 2, h // 2 - 110))
+            draw_divider(surf, w // 2, h // 2 - 40, 620, flip=True)
+            self.main_menu.draw(surf, w // 2, h // 2 + 10)  # thấp hơn một dòng so với trước (-70)
+        elif self.scene == "tutorial":
+            self.tutorial.draw(surf)
         elif self.scene == "select":
             self._draw_select(surf)
         elif self.scene == "credits":
