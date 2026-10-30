@@ -131,7 +131,7 @@ class Tutorial:
         s = max(0.6, min(1.5, min(w / 1536, h / 864)))
         if self._dim is None or self._dim.get_size() != (w, h):
             self._dim = pygame.Surface((w, h), pygame.SRCALPHA)
-            self._dim.fill((10, 12, 18, 175))
+            self._dim.fill((*COLORS["dim"], 200))
         surf.blit(self._dim, (0, 0))
 
         n, page = len(self.pages), self.pages[self.index]
@@ -157,7 +157,7 @@ class Tutorial:
         if img:
             r = img.get_rect(midright=(w - mx, (top + bottom) // 2))
             surf.blit(img, r)
-            pygame.draw.rect(surf, COLORS["border"], r.inflate(8, 8), 2, border_radius=10)
+            pygame.draw.rect(surf, COLORS["border"], r.inflate(8, 8), 3, border_radius=6)
 
         bw, bh = int(170 * s), max(30, int(42 * s))
         by = h - int(50 * s) - bh

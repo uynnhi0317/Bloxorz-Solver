@@ -3,12 +3,16 @@
 from __future__ import annotations
 
 import math
+from dataclasses import replace
 from typing import Dict, List, Optional, Sequence as Seq, Tuple
 
 import numpy as np
+import pygame
 
-from game import Action, Coord, Move, State, SwitchKind, TileType
+from game import Action, Board, Coord, Move, State, SwitchKind, TileType
+from game.rules import _is_switch_triggered, roll as roll_state
 from .renderer import PALETTE, Box, Renderer, TileFx, make_box, rotate
+from .theme import glow_sprite, petal_sprite
 
 # action -> (axis, sign); axis 0 = row, 1 = col
 DIR_AXIS = {Action.MOVE_UP: (0, -1), Action.MOVE_DOWN: (0, 1),
@@ -34,8 +38,17 @@ class Animation:
         raise NotImplementedError
 
 
+def _aligned_box(box: Box, verts: np.ndarray) -> Box:
+    """Box nằm thẳng theo lưới ở vị trí `verts`, với tư thế hình Vô Diện đúng cho trạng thái mới."""
+    lo, hi = verts.min(axis=0), verts.max(axis=0)
+    d = hi - lo
+    pose = "standing" if d[2] > 1.5 else "horizontal" if d[1] > 1.5 else "vertical" if d[0] > 1.5 else "standing"
+    return replace(box, verts=make_box(lo[0], lo[1], lo[2], d[0], d[1], d[2]), pose=pose, fade=1.0)
+
+
 class RollAnimation(Animation):
-    """Animation lăn cho cả khối, hay phần nửa khối đang active nếu đang trong trạng thái tách."""
+    """Animation lăn cho cả khối, hay phần nửa khối đang active nếu đang trong trạng thái tách.
+    Nửa đầu cú lăn: hình theo tư thế cũ; nửa sau: theo tư thế mới. Mặt nạ mờ đi đúng lúc đổi tư thế."""
 
     def __init__(self, renderer: Renderer, before: State, action: Action,
                  moving: int = 0, duration_ms: float = 160):
@@ -45,8 +58,11 @@ class RollAnimation(Animation):
         boxes = renderer.state_boxes(before)
         self.static = [b for i, b in enumerate(boxes) if i != moving]
         self.mover = boxes[moving]
-        end = np.round(rotate(self.mover.verts, self.axis, self.sign, math.pi / 2), 6) + 0.0
-        self.final_boxes: List[Box] = self.static + [Box(end, self.mover.color)]
+        v = self.mover.verts
+        self.pivot = float(v[:, self.axis].max() if self.sign > 0 else v[:, self.axis].min())
+        end = np.round(rotate(v, self.axis, self.sign, math.pi / 2), 6) + 0.0
+        self.end_box = _aligned_box(self.mover, end)
+        self.final_boxes: List[Box] = self.static + [self.end_box]
         self.t, self.duration = 0.0, duration_ms
 
     def update(self, dt_ms: float) -> None:
@@ -55,8 +71,13 @@ class RollAnimation(Animation):
 
     def draw(self, surface) -> None:
         theta = ease(self.t) * math.pi / 2
-        v = rotate(self.mover.verts, self.axis, self.sign, theta)
-        self.r.draw_scene(surface, self.mask, self.static + [Box(v, self.mover.color)])
+        fade = min(1.0, abs(theta - math.pi / 4) / (math.pi / 8))
+        if theta < math.pi / 4:
+            box = replace(self.mover, verts=rotate(self.mover.verts, self.axis, self.sign, theta), fade=fade)
+        else:
+            box = replace(self.end_box, fade=fade,
+                          verts=rotate(self.end_box.verts, self.axis, self.sign, theta - math.pi / 2, self.pivot))
+        self.r.draw_scene(surface, self.mask, self.static + [box])
 
 
 class TumbleAnimation(Animation):
@@ -91,11 +112,11 @@ class TumbleAnimation(Animation):
     def draw(self, surface) -> None:
         alpha = int(255 * (1 - ease(max(0.0, (self.t - 0.4) / 0.6))))
         self.r.draw_scene(surface, self.mask,
-                          self.static + [Box(self.pose(self.t), self.mover.color)], alpha)
+                          self.static + [replace(self.mover, verts=self.pose(self.t))], alpha)
 
 
 class DropAnimation(Animation):
-    """Khối chìm thẳng (gạch vỡ, lăn khỏi mặt bảng, thắng).
+    """Khối chìm thẳng (gạch vỡ, lăn khỏi mặt bảng).
     fall_tiles: các ô tile rơi theo khối (vd ô fragile bị đứng lên), nghiêng nhẹ; rơi xong thì ẩn hẳn."""
     TILT = 0.35  # rad (~20 độ)
 
@@ -118,7 +139,7 @@ class DropAnimation(Animation):
         for b in self.boxes:
             v = b.verts.copy()
             v[:, 2] += dz
-            moved.append(Box(v, b.color))
+            moved.append(replace(b, verts=v))
         alpha = int(255 * (1 - self.t)) if self.fade else 255
         fx = {c: TileFx(xform=self._tilt(c)) for c in self.fall_tiles}
         self.r.draw_scene(surface, self.mask, moved, alpha, fx)
@@ -151,8 +172,9 @@ class SpawnAnimation(Animation):
         for i, (tr, tc) in enumerate(self.targets):
             r = self.origin[0] + (tr - self.origin[0]) * k
             c = self.origin[1] + (tc - self.origin[1]) * k
-            color = PALETTE["cube_active"] if (tr, tc) == self.active else PALETTE["cube_idle"]
-            boxes.append(Box(make_box(r, c, hop, 1, 1, 1), color))
+            on = (tr, tc) == self.active
+            color = PALETTE["cube_active"] if on else PALETTE["cube_idle"]
+            boxes.append(Box(make_box(r, c, hop, 1, 1, 1), color, "head" if i == 0 else "body", active=on))
         self.r.draw_scene(surface, self.mask, boxes)
 
 
@@ -218,7 +240,7 @@ class IntroAnimation(Animation):
             for b in self.boxes:
                 v = b.verts.copy()
                 v[:, 2] += dz
-                boxes.append(Box(v, b.color))
+                boxes.append(replace(b, verts=v))
             alpha = int(255 * min(1.0, cp * 3))
         self.r.draw_scene(surface, self.state.bridge_mask, boxes, alpha, fx)
 
@@ -250,12 +272,11 @@ class OutroAnimation(Animation):
         self.r.draw_scene(surface, self.mask, [], 255, fx)
 
 
-class BridgeFlips:
-    """Cầu đổi trạng thái: lật quanh bản lề (cạnh chung với tile kề) giữa "gập dưới tile kề" (đóng)
-    và "phẳng" (mở). KHÔNG chặn input: chạy nền, caller gọi update() mỗi frame và
-    gán renderer.ambient_fx = flips.fx(), nên người chơi đi tiếp được ngay trong lúc cầu lật.
-    Cầu không có bản lề (không có tile kề) thì trồi lên / chìm xuống."""
-    DURATION_MS, STAGGER_MS = 170.0, 25.0
+class BridgeTransitions:
+    """Cầu đổi trạng thái: các ván gỗ trượt lên và rõ dần (mở) / trượt xuống và mờ dần (đóng), khoảng 0,3 giây.
+    KHÔNG chặn input và KHÔNG giữ trạng thái logic: bridge_mask của State đã đổi ngay khi nước đi hoàn tất,
+    lớp này chỉ dựng hình quá độ. Caller gọi update() mỗi frame và gán renderer.ambient_fx = fx()."""
+    DURATION_MS, WAVE_MS = 260.0, 40.0  # tổng tối đa 0,3 giây kể cả độ lan giữa các ô cầu
 
     def __init__(self, renderer: Renderer):
         self.r = renderer
@@ -265,16 +286,15 @@ class BridgeFlips:
         self.items = []
 
     def start(self, old_mask: int, new_mask: int) -> None:
-        board, diff, i = self.r.board, old_mask ^ new_mask, 0
-        self.items = [it for it in self.items if it[0] not in
-                      {(r, c) for r, row in enumerate(board.tiles) for c, t in enumerate(row)
-                       if t.kind == TileType.BRIDGE and diff & board.bridge_bit[t.tile_id]}]
-        for r, row in enumerate(board.tiles):
-            for c, tile in enumerate(row):
-                if tile.kind == TileType.BRIDGE and diff & board.bridge_bit[tile.tile_id]:
-                    opening = not (new_mask & board.bridge_bit[tile.tile_id])
-                    self.items.append([(r, c), opening, -i * self.STAGGER_MS])
-                    i += 1
+        board, diff = self.r.board, old_mask ^ new_mask
+        cells = [(r, c, tile) for r, row in enumerate(board.tiles) for c, tile in enumerate(row)
+                 if tile.kind == TileType.BRIDGE and diff & board.bridge_bit[tile.tile_id]]
+        changed = {(r, c) for r, c, _ in cells}
+        self.items = [it for it in self.items if it[0] not in changed]
+        step = self.WAVE_MS / max(1, len(cells) - 1)
+        for i, (r, c, tile) in enumerate(cells):
+            opening = not (new_mask & board.bridge_bit[tile.tile_id])
+            self.items.append([(r, c), opening, -i * step])
 
     def update(self, dt_ms: float) -> None:
         for it in self.items:
@@ -284,15 +304,84 @@ class BridgeFlips:
     def fx(self) -> Dict[Coord, TileFx]:
         out: Dict[Coord, TileFx] = {}
         for cell, opening, t in self.items:
-            q = ease(min(1.0, max(0.0, t / self.DURATION_MS)))
-            if cell in self.r.hinges:
-                theta = math.pi * ((1 - q) if opening else q)
-                out[cell] = TileFx(theta=theta, under=theta > math.pi / 2)
-            elif opening:   # không bản lề: trồi lên từ dưới
-                out[cell] = TileFx(hidden=True) if t <= 0 else TileFx(dz=-6.0 * (1 - q))
-            else:           # không bản lề: chìm xuống rồi biến mất (cầu đã đóng nên mask không vẽ nữa)
-                out[cell] = TileFx(dz=-6.0 * q, theta=0.0)
+            q = min(1.0, max(0.0, t / self.DURATION_MS))
+            out[cell] = TileFx(plank=q if opening else 1 - q)
         return out
+
+
+class SwitchPulses:
+    """Công tắc vừa được kích hoạt: chớp sáng, vòng sóng lan tỏa, vài cánh hoa bung ra.
+    Chỉ là hình ảnh, không chặn input; ô nào được kích hoạt do triggered_switches() xác định từ State."""
+    DURATION_MS, N_PETALS = 700.0, 8
+
+    def __init__(self, renderer: Renderer):
+        self.r = renderer
+        self.items: List[list] = []  # [cell, màu, thời gian đã chạy, góc lệch, số cánh, phạm vi]
+
+    def clear(self) -> None:
+        self.items = []
+
+    def trigger(self, cell: Coord, color=None, petals: Optional[int] = None, reach: float = 1.0) -> None:
+        tile = self.r.board.tile_at(cell)
+        if color is None:
+            color = PALETTE[tile.switch_kind.value] if tile.switch_kind is not None else PALETTE["soft"]
+        self.items.append([cell, color, 0.0, (cell[0] * 37 + cell[1] * 61) % 360,
+                           self.N_PETALS if petals is None else petals, reach])
+
+    def update(self, dt_ms: float) -> None:
+        for it in self.items:
+            it[2] += dt_ms
+        self.items = [it for it in self.items if it[2] < self.DURATION_MS]
+
+    def draw_under(self, surface) -> None:
+        r3 = self.r
+        for (r, c), color, t, _, _, reach in self.items:
+            k = t / self.DURATION_MS
+            cr, cc = r + 0.5, c + 0.5
+            rad = max(4, int(r3.scale * 0.8 * reach))
+            x, y = r3.project([(cr, cc, 0.0)])[0]
+            surface.blit(glow_sprite(rad, color, round((1 - k) ** 2, 1)), (x - rad, y - rad),
+                         special_flags=pygame.BLEND_RGB_ADD)
+            for delay in (0.0, 0.22):  # hai vòng sóng nối nhau
+                q = (k - delay) / (1 - delay)
+                if q <= 0:
+                    continue
+                ring = r3._ground_ring(cr, cc, (0.25 + 0.95 * ease(q)) * reach, 36)
+                x0, y0 = np.floor(ring.min(axis=0)).astype(int) - 2
+                x1, y1 = np.ceil(ring.max(axis=0)).astype(int) + 3
+                layer = pygame.Surface((int(x1 - x0), int(y1 - y0)))
+                col = tuple(int(v * (1 - q)) for v in color)
+                pygame.draw.lines(layer, col, True, (ring - (x0, y0)).tolist(), max(1, int(3 * r3.detail)))
+                surface.blit(layer, (int(x0), int(y0)), special_flags=pygame.BLEND_RGB_ADD)
+
+    def draw_over(self, surface) -> None:
+        r3 = self.r
+        size = max(3, int(r3.scale * 0.1))
+        for (r, c), _, t, seed, n, reach in self.items:
+            k = t / self.DURATION_MS
+            for i in range(n):
+                a = math.radians(seed + i * 360 / n)
+                d = (0.2 + 0.85 * ease(k)) * reach
+                z = (0.15 + 1.1 * math.sin(math.pi * min(1.0, k * 1.1))) * reach
+                x, y = r3.project([(r + 0.5 + d * math.sin(a), c + 0.5 + d * math.cos(a), z)])[0]
+                spr = petal_sprite(size, i * 5 + int(k * 40), i % 3, PALETTE["soft"], 235)
+                spr.set_alpha(int(255 * (1 - k) ** 0.7))
+                surface.blit(spr, (x - spr.get_width() / 2, y - spr.get_height() / 2))
+
+
+def triggered_switches(board: Board, before: State, after: State, move: Move) -> List[Coord]:
+    """Các ô công tắc vừa được kích hoạt bởi nước đi before -> after. Dùng lại đúng điều kiện của
+    game.rules (không tự định nghĩa lại luật), chỉ đọc, chỉ phục vụ hiệu ứng."""
+    cells = []
+    for cell in set(after.occupied_cells) - set(before.occupied_cells):
+        tile = board.tile_at(cell)
+        if tile.kind == TileType.SWITCH and tile.switch_kind != SwitchKind.SPLIT and _is_switch_triggered(after, tile):
+            cells.append(cell)
+    if after.split_positions is not None and before.split_positions is None:
+        landed = roll_state(before, move.action).position   # ô công tắc ( ) khối vừa đứng lên
+        if board.tile_at(landed).kind == TileType.SWITCH:
+            cells.append(landed)
+    return sorted(cells)
 
 
 # --------------------------------------------------------------- factories
@@ -328,7 +417,7 @@ def _split_origin(renderer: Renderer, landed: np.ndarray) -> Tuple[int, int]:
 def animate_move(renderer: Renderer, before: State, move: Move, after: State,
                  duration_ms: float = 160) -> Animation:
     """Animation của nước đi hợp lệ (move.action phải là MOVE_*).
-    Thứ tự: lăn -> (tách cube nếu dẫm split switch). Cầu đổi trạng thái do BridgeFlips lo (chạy nền)."""
+    Thứ tự: lăn -> (tách cube nếu dẫm split switch). Cầu đổi trạng thái do BridgeTransitions lo (chạy nền)."""
     roll = RollAnimation(renderer, before, move.action,
                          moving=_moving_index(before, move.cube), duration_ms=duration_ms)
     parts: List[Animation] = [roll]
@@ -419,7 +508,37 @@ def animate_fall(renderer: Renderer, before: State, action: Optional[Action] = N
     return Sequence(roll, TumbleAnimation(renderer, mask, roll.static, end, axis, sign, float(pivot)))
 
 
+class WinAnimation(Animation):
+    """Thắng: cổng torii sáng dần, xoáy sáng bùng lên, Vô Diện chìm dần vào tâm cổng rồi tan đi.
+    Chỉ là hình ảnh: điều kiện thắng vẫn do is_goal quyết định trước khi animation này được tạo."""
+
+    def __init__(self, renderer: Renderer, state: State, duration_ms: float = 1250):
+        self.r, self.state = renderer, state
+        self.boxes = renderer.state_boxes(state)
+        self.duration, self.t = duration_ms, 0.0
+        self.burst = False
+
+    def update(self, dt_ms: float) -> None:
+        self.t = min(1.0, self.t + dt_ms / self.duration)
+        self.done = self.t >= 1.0
+        if not self.burst and self.t > 0.12:
+            self.burst = True
+            if self.r.pulses is not None:
+                self.r.pulses.trigger(self.r.board.goal, PALETTE["soft"], petals=14, reach=1.6)
+
+    def draw(self, surface) -> None:
+        self.r.goal_glow = ease(min(1.0, self.t / 0.3))
+        sink = ease(max(0.0, (self.t - 0.22) / 0.78))
+        moved = []
+        for b in self.boxes:
+            v = b.verts.copy()
+            v[:, 2] -= 2.05 * sink
+            moved.append(replace(b, verts=v))
+        alpha = int(255 * (1 - ease(max(0.0, (self.t - 0.72) / 0.28))))
+        self.r.draw_scene(surface, self.state.bridge_mask, moved, alpha, hide_below=True)
+        self.r.goal_glow = 0.0
+
+
 def animate_win(renderer: Renderer, state: State) -> Animation:
-    """Block sinks into the goal hole."""
-    return DropAnimation(renderer, state.bridge_mask, renderer.state_boxes(state),
-                         duration_ms=600, depth=2.5)
+    """Block sinks into the torii gate."""
+    return WinAnimation(renderer, state)
