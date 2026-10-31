@@ -702,15 +702,16 @@ class App:
     def _panel_title(self, surf, x, y, text, s) -> None:
         pygame.draw.rect(surf, COLORS["accent"], (x, y, max(2, int(3 * s)), int(20 * s)))
         draw_text(surf, text, max(10, int(22 * s)), COLORS["text"], bold=True,
-                midleft=(x + int(10 * s), y + int(9 * s)))
+                midleft=(x + int(10 * s), y + int(11 * s)))
 
     def _panel_row(self, surf, x, y, pw, s, label, value) -> None:
         row = pygame.Rect(x, y, pw, int(30 * s))
         pygame.draw.rect(surf, COLORS["panel"], row, border_radius=int(6 * s))
+        cy = row.centery + max(1, int(2.5 * s))
         draw_text(surf, label, max(9, int(18 * s)), COLORS["accent"],
-                midleft=(row.x + int(10 * s), row.centery))
+                midleft=(row.x + int(10 * s), cy))
         draw_text(surf, value, max(10, int(19 * s)), COLORS["text"], bold=True,
-                midright=(row.right - int(10 * s), row.centery))
+                midright=(row.right - int(10 * s), cy))
 
     def _draw_metrics(self, surf: pygame.Surface) -> None:
         """Cột SOLVER bên phải: nút solver, thông tin màn, số liệu, điều khiển replay / sau khi giải."""
