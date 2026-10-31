@@ -1,0 +1,35 @@
+# robot.mtl - sinh bởi make_assets.py
+newmtl chassis
+Kd 0.6471 0.7059 0.7843
+d 1.000
+illum 2
+
+newmtl dark_metal
+Kd 0.1765 0.2039 0.2549
+d 1.000
+illum 2
+
+newmtl visor
+Kd 0.0784 0.0941 0.1255
+d 1.000
+illum 0
+
+newmtl eye
+Kd 0.3137 0.8824 1.0000
+d 1.000
+illum 0
+
+newmtl core
+Kd 1.0000 0.6667 0.1961
+d 1.000
+illum 0
+
+newmtl antenna
+Kd 0.9020 0.3725 0.2941
+d 1.000
+illum 2
+
+newmtl trim
+Kd 0.8235 0.8824 0.9608
+d 1.000
+illum 2
