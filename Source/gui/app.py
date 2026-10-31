@@ -17,7 +17,7 @@ import pygame
 
 from game import Action, Board, Coord, Move, State, get_next_state, is_goal, load_stage
 from .animations import (Animation, BridgeFlips, DIR_DELTA, Sequence as AnimSequence, animate_fall,
-                         animate_intro, animate_move, animate_outro, animate_win, is_bump)
+                         animate_intro, animate_move, animate_outro, animate_win, is_bump, DropAnimation)
 from .controls import COLORS, KEY_ACTIONS, Button, Menu, draw_caps, draw_divider, draw_text, draw_title
 from .theme import Background
 from .renderer import Renderer
@@ -148,6 +148,19 @@ class PlaySession:
         self.sol_paused = False
 
     @property
+    def winning_drop(self) -> bool:
+        """Đang ở pha rơi vào goal của bước cuối (đã lăn xong)."""
+        return (self.pending is not None and self.pending[1] == "won"
+                and isinstance(self.anim, AnimSequence) and bool(self.anim.anims)
+                and isinstance(self.anim.anims[0], DropAnimation))
+
+    @property
+    def finished(self) -> bool:
+        """Solver đã đi hết, và không còn pha lăn nào: lúc này nút là Replay."""
+        return (self.has_solution and self.sol_idx >= len(self.sol_actions)
+                and (self.anim is None or self.winning_drop))
+    
+    @property
     def has_solution(self) -> bool:
         return self.sol_actions is not None
 
@@ -170,7 +183,11 @@ class PlaySession:
             self.sol_states, self.sol_moves = states, moves
 
     def toggle_replay_pause(self) -> None:
-        if self.has_solution and self.sol_idx >= len(self.sol_actions):
+        if not self.has_solution:
+            return
+        if self.finished:
+            self.anim, self.pending, self.end_fx = None, None, None
+            self.status = "playing"
             self.sol_idx = 0
             self.state = self.sol_states[0]
             self.moves = self.sol_moves[0]
@@ -322,8 +339,6 @@ class App:
         self.solve_done = False
         self.solve_start = None
         self.toast_ms = 0.0
-
-
 
     # ------------------------------------------------------------------ API cho T14
     def register_solver(self, name: str, fn: Solver) -> None:
@@ -772,8 +787,8 @@ class App:
                             border_radius=bar_h // 2)
             y += bar_h + int(16 * s)
 
-            paused = sess.sol_paused or sess.sol_idx >= n
-            if sess.sol_idx >= n:
+            paused = sess.sol_paused or sess.finished
+            if sess.finished:
                 self.btn_replay.label = "Replay"
             else:
                 self.btn_replay.label = "Resume" if paused else "Pause"
