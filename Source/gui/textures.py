@@ -22,10 +22,6 @@ from game import SwitchKind, Tile, TileType
 
 Pt = Tuple[float, float]
 
-# Phong cách sàn / ô vỡ: "classic" = bản gốc (phẳng), "hollow" = đá cuội + rêu, "hot" = than hồng nứt.
-# Đổi hai hằng này là chuyển được qua lại, không cần xoá code.
-FLOOR_STYLE = "classic"      # "classic" | "hollow"
-FRAGILE_STYLE = "classic"    # "classic" | "hot"
 CLASSIC = {"floor": (112, 128, 164), "floor_alt": (104, 119, 153),
            "fragile": (214, 140, 72), "crack": (122, 72, 34)}
 
@@ -35,12 +31,6 @@ def shade(c, f: float):
 
 
 ART = {
-    # floor
-    "cobble_body": (74, 84, 106), "moss_body": (56, 80, 62),
-    "mortar": (28, 32, 44), "mortar_moss": (62, 92, 70),
-    "cobble_stones": [(122, 132, 156), (108, 118, 142), (134, 142, 162)],
-    "moss_stones": [(98, 118, 94), (86, 106, 84), (108, 126, 96)],
-    "moss_dark": (60, 126, 58), "moss_light": (120, 188, 94),
     # bridge (brass / gold)
     "bridge_body": (150, 112, 40), "bridge_dark": (112, 78, 26), "bridge_mid": (184, 138, 48),
     "bridge_light": (238, 196, 90), "bridge_hi": (255, 240, 170),
@@ -53,9 +43,6 @@ ART = {
     # split switch
     "split_body": (38, 38, 60), "split_plate": (46, 46, 72), "split_light": (228, 230, 255),
     "split_rim": (136, 136, 204),
-    # fragile (coal + ember)
-    "frag_body": (36, 30, 34), "frag_ember": (120, 38, 18),
-    "frag_slab": [(46, 40, 44), (38, 33, 37), (52, 45, 48)],
 }
 
 
@@ -69,43 +56,12 @@ def circ(cr: float, cc: float, rad: float, n: int = 14, sq: float = 1.0) -> List
             for i in range(n)]
 
 
-def sq_shape(cr, cc, hr, hc, e=2.6, n=18, rng: Optional[random.Random] = None, jit=0.0) -> List[Pt]:
-    """Hình chữ nhật bo tròn (siêu elip) bán kính nửa cạnh hr x hc."""
-    pts = []
-    for i in range(n):
-        a = 2 * math.pi * i / n
-        ca, sa = math.cos(a), math.sin(a)
-        x = math.copysign(abs(ca) ** (2 / e), ca)
-        y = math.copysign(abs(sa) ** (2 / e), sa)
-        k = 1 + (rng.uniform(-jit, jit) if rng else 0.0)
-        pts.append((cr + y * hr * k, cc + x * hc * k))
-    return pts
-
-
 def scale_pts(pts: Sequence[Pt], cr: float, cc: float, f: float) -> List[Pt]:
     return [(cr + (p[0] - cr) * f, cc + (p[1] - cc) * f) for p in pts]
 
 
 def shift(pts: Sequence[Pt], dr: float, dc: float) -> List[Pt]:
     return [(p[0] + dr, p[1] + dc) for p in pts]
-
-
-def layout(rng: random.Random, r: int, c: int, nrows: int, gap: float, cols=(2, 3)):
-    """Chia ô thành các hàng đá có độ cao/độ rộng ngẫu nhiên: [(cr, cc, nửa_cao, nửa_rộng)]."""
-    hs = [rng.uniform(0.8, 1.2) for _ in range(nrows)]
-    tot = sum(hs)
-    out, y = [], 0.0
-    for h in hs:
-        h /= tot
-        ws = [rng.uniform(0.7, 1.3) for _ in range(rng.choice(cols))]
-        wt, x = sum(ws), 0.0
-        for w in ws:
-            w /= wt
-            out.append((r + y + h / 2, c + x + w / 2, max(0.03, h / 2 - gap), max(0.03, w / 2 - gap)))
-            x += w
-        y += h
-    return out
-
 
 def jag(rng: random.Random, a: Pt, b: Pt, n: int, amp: float) -> List[Pt]:
     """Đường gấp khúc từ a đến b (vết nứt)."""
@@ -134,17 +90,14 @@ class TileArt:
     def body_color(self, r: int, c: int, tile: Tile):
         k = tile.kind
         if k == TileType.FRAGILE:
-            return ART["frag_body"] if FRAGILE_STYLE == "hot" else CLASSIC["fragile"]
+            return CLASSIC["fragile"]
         if k == TileType.BRIDGE:
             return ART["bridge_body"]
         if k == TileType.GOAL:
             return ART["goal_body"]
         if k == TileType.SWITCH:
             return ART["split_body"] if tile.switch_kind == SwitchKind.SPLIT else ART["plate_body"]
-        if FLOOR_STYLE == "classic":
-            return CLASSIC["floor_alt"] if (r + c) % 2 else CLASSIC["floor"]
-        return ART["moss_body"] if (r + c) % 2 else ART["cobble_body"]
-
+        return CLASSIC["floor_alt"] if (r + c) % 2 else CLASSIC["floor"]
     # ------------------------------------------------------------ drawing primitives
     def _pts(self, ctx, pts: Sequence[Pt], z: float):
         cell, theta, dz, xform = ctx
@@ -176,14 +129,8 @@ class TileArt:
             return
         ctx = ((r, c), theta, dz, xform)
         k = tile.kind
-        if k == TileType.FLOOR:
-            if FLOOR_STYLE == "hollow":
-                self._cobbles(s, ctx, r, c, moss=(r + c) % 2 == 1)
-        elif k == TileType.FRAGILE:
-            if FRAGILE_STYLE == "hot":
-                self._fragile(s, ctx, r, c)
-            else:
-                self._fragile_classic(s, ctx, r, c)
+        if k == TileType.FRAGILE:
+            self._fragile_classic(s, ctx, r, c)
         elif k == TileType.BRIDGE:
             self._bridge(s, ctx, r, c)
         elif k == TileType.GOAL:
@@ -195,42 +142,6 @@ class TileArt:
                 self._plate(s, ctx, r, c)
                 (self._soft if tile.switch_kind == SwitchKind.SOFT else self._heavy)(s, ctx, r, c)
 
-    # ------------------------------------------------------------ floor: cobblestone / moss
-    def _moss(self, s, ctx, rng, r, c, cr, cc, size) -> None:
-        for _ in range(rng.randint(2, 3)):
-            rad = size * rng.uniform(0.35, 0.6)
-            m = rad + 0.03
-            mr = min(max(cr + rng.uniform(-0.5, 0.5) * size, r + m), r + 1 - m)
-            mc = min(max(cc + rng.uniform(-0.5, 0.5) * size, c + m), c + 1 - m)
-            self.poly(s, ctx, circ(mr, mc, rad, 9, 0.85), ART["moss_dark"])
-            self.poly(s, ctx, circ(mr - rad * 0.2, mc - rad * 0.2, rad * 0.6, 8, 0.85), ART["moss_light"])
-
-    def _cobbles(self, s, ctx, r, c, moss: bool) -> None:
-        rng = random.Random(r * 7919 + c * 104729 + 11)
-        self.poly(s, ctx, rect(r, c, 0.0), ART["mortar_moss"] if moss else ART["mortar"])
-        pal = ART["moss_stones"] if moss else ART["cobble_stones"]
-        gap = 0.018 if moss else 0.038
-        for cr, cc, hr, hc in layout(rng, r, c, 3, gap):
-            base = rng.choice(pal)
-            pts = sq_shape(cr, cc, hr, hc, 2.6, 18, rng, 0.05)
-            self.poly(s, ctx, pts, shade(base, 0.72 if moss else 0.55))   # rim                                   # rim tối
-            self.poly(s, ctx, shift(scale_pts(pts, cr, cc, 0.93), -0.012, -0.008), base)  # thân
-            self.poly(s, ctx, shift(scale_pts(pts, cr, cc, 0.55), -0.03, -0.02), shade(base, 1.15))  # sáng
-            if moss:
-                if rng.random() < 0.75:
-                    self._moss(s, ctx, rng, r, c, cr - hr * 0.25, cc - hc * 0.15, min(hr, hc))
-            elif rng.random() < 0.4:   # vết nứt chân chim trên đá
-                a = (cr - hr * 0.45, cc + rng.uniform(-hc, hc) * 0.5)
-                b = (cr + hr * 0.45, cc + rng.uniform(-hc, hc) * 0.5)
-                mid = ((a[0] + b[0]) / 2, (a[1] + b[1]) / 2 + rng.uniform(-0.04, 0.04))
-                self.line(s, ctx, [a, mid, b], shade(base, 0.42), 0.9)
-        if moss:     # rêu lấp vào khe giữa các viên đá
-            for _ in range(3):
-                self._moss(s, ctx, rng, r, c, r + rng.uniform(0.1, 0.9), c + rng.uniform(0.1, 0.9), 0.05)
-        else:        # vài đốm rêu nhỏ cho đỡ trơ
-            for _ in range(rng.choice((0, 1, 2))):
-                self._moss(s, ctx, rng, r, c, r + rng.uniform(0.1, 0.9), c + rng.uniform(0.1, 0.9), 0.04)
-
     # ------------------------------------------------------------ fragile: bản gốc (cam hổ phách, vài vết nứt)
     def _fragile_classic(self, s, ctx, r, c) -> None:
         rng = random.Random(r * 6151 + c * 3571 + 5)
@@ -238,40 +149,6 @@ class TileArt:
             a = edge_pt(rng, r, c, rng.randrange(4))
             b = (r + 0.5 + rng.uniform(-0.2, 0.2), c + 0.5 + rng.uniform(-0.2, 0.2))
             self.line(s, ctx, jag(rng, a, b, 4, 0.05), CLASSIC["crack"], 1.4)
-
-    # ------------------------------------------------------------ fragile: than hồng, nứt
-    def _fragile(self, s, ctx, r, c) -> None:
-        rng = random.Random(r * 6151 + c * 3571 + 5)
-        self.poly(s, ctx, rect(r, c, 0.0), ART["frag_ember"])           # than hồng lộ ra ở các khe
-        for cr, cc, hr, hc in layout(rng, r, c, 3, 0.02):
-            pts = sq_shape(cr, cc, hr, hc, 2.0, 12, rng, 0.08)
-            base = rng.choice(ART["frag_slab"])
-            self.poly(s, ctx, pts, base)
-            self.poly(s, ctx, shift(scale_pts(pts, cr, cc, 0.6), -0.012, -0.01), shade(base, 1.18))
-        for _ in range(2):                                               # vết nứt lớn xuyên qua các tảng
-            sa = rng.randrange(4)
-            a = edge_pt(rng, r, c, sa)
-            if rng.random() < 0.35:
-                b = (r + 0.5 + rng.uniform(-0.25, 0.25), c + 0.5 + rng.uniform(-0.25, 0.25))
-            else:
-                b = edge_pt(rng, r, c, (sa + rng.choice((1, 2, 3))) % 4)
-            path = jag(rng, a, b, 5, 0.06)
-            self._hot_line(s, ctx, path, 1.0)
-            for _ in range(1):                                           # nhánh phụ
-                p = path[rng.randint(1, len(path) - 2)]
-                ang = rng.uniform(0, 2 * math.pi)
-                ln = rng.uniform(0.15, 0.3)
-                q = (min(max(p[0] + ln * math.sin(ang), r + 0.03), r + 0.97),
-                     min(max(p[1] + ln * math.cos(ang), c + 0.03), c + 0.97))
-                self._hot_line(s, ctx, jag(rng, p, q, 3, 0.04), 0.6)
-        for _ in range(8):                                               # tàn lửa li ti
-            pr, pc = r + rng.uniform(0.08, 0.92), c + rng.uniform(0.08, 0.92)
-            self.poly(s, ctx, circ(pr, pc, rng.uniform(0.01, 0.022), 6), (255, 168, 70))
-
-    def _hot_line(self, s, ctx, path, k: float) -> None:
-        self.line(s, ctx, path, (104, 24, 14), 4.2 * k)
-        self.line(s, ctx, path, (238, 92, 30), 2.4 * k)
-        self.line(s, ctx, path, (255, 198, 104), 1.0 * k)
 
     # ------------------------------------------------------------ bridge: đồng thau vàng
     def _bridge(self, s, ctx, r, c) -> None:

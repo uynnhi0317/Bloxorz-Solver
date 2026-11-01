@@ -18,13 +18,10 @@ import pygame
 
 from game import SwitchKind, TileType
 from .theme import PALETTE, WATER_Z
-from .textures import FRAGILE_STYLE
-
 ADD = pygame.BLEND_RGB_ADD
 
 GOAL_COL = (255, 226, 150)
 GOAL_COL_HI = (255, 250, 226)
-EMBER_COL = (255, 112, 40)
 SPLIT_COL = (186, 182, 255)
 WATER_COL = (50, 150, 210)
 WATER_HI = (170, 235, 255)
@@ -209,15 +206,6 @@ class Effects:
                 beam = self._beam(w, h, _lerp(GOAL_COL, GOAL_COL_HI, L), 1.0)
                 surf.blit(beam, (int(cx - w / 2), int(cy - h)), special_flags=ADD)
 
-        # fragile: than hồng thở nhẹ
-        for cell in (self.fragile if FRAGILE_STYLE == "hot" else ()):
-            if cell in fx:
-                continue
-            ph = cell[0] * 1.7 + cell[1] * 2.3
-            pulse = 0.5 + 0.5 * math.sin(self._t * 1.7 + ph)
-            cx, cy = r.project([(cell[0] + 0.5, cell[1] + 0.5, 0.02)])[0]
-            self._glow(surf, cx, cy, 0.66 * sc, 0.38 * sc, EMBER_COL, 0.20 + 0.14 * round(pulse * 4) / 4)
-
         # split switch: quầng sáng tím trắng
         for cell in self.splits:
             if cell in fx:
@@ -246,12 +234,6 @@ class Effects:
         if strength > 0.98:
             self._sparks(surf, gr + 0.5, gc + 0.5, gdz, int(14 + 12 * L), 2.6 - 0.8 * L, 2.6 + 2.2 * L, 0.30,
                          _lerp(GOAL_COL, GOAL_COL_HI, L), (0.045, 0.065, 0.09), 0.7 + 0.3 * L, 0.0)
-
-        for cell in (self.fragile if FRAGILE_STYLE == "hot" else ()):
-            if cell in fx:
-                continue
-            self._sparks(surf, cell[0] + 0.5, cell[1] + 0.5, 0.0, 2, 3.2, 1.3, 0.30,
-                         (255, 150, 60), (0.03, 0.04), 0.9, (cell[0] * 0.37 + cell[1] * 0.61) % 1.0)
 
         for cell in self.splits:
             if cell in fx:
