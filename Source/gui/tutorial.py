@@ -55,7 +55,7 @@ class Tutorial:
             if not self.pages:
                 raise ValueError("pages[] rỗng")
         except Exception as exc:  # file thiếu/hỏng: không crash app
-            self.pages, self.error = [], f"Không nạp được tutorial: {exc}"
+            self.pages, self.error = [], f"Could not load tutorial: {exc}"
 
     def open(self, mode: str = "menu") -> None:
         """mode: "newgame" | "menu" | "play" - quyết định nhãn nút."""

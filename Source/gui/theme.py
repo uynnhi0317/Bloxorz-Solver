@@ -11,17 +11,19 @@ import pygame
 # ---- màu thế giới (renderer dùng)
 PALETTE = {
     "floor": (112, 128, 164),          # đá xanh xám
-    "fragile": (214, 140, 72),         # hổ phách: nổi bật trên nền xanh
-    "bridge": (96, 190, 212),          # xanh ngọc phát sáng
+    "fragile": (44, 36, 38),         # hổ phách: nổi bật trên nền xanh
+    "bridge": (226, 182, 78),          # xanh ngọc phát sáng
     "goal_hole": (6, 8, 16),
     "goal_inner": (28, 36, 64),
     "soft": (110, 224, 164),
     "heavy": (240, 104, 104),
     "split": (160, 150, 255),
     "block": (226, 230, 240),          # vỏ trắng ngà
-    "cube_active": (128, 204, 255),
-    "cube_idle": (150, 160, 186),
+    "cube_active": (236, 240, 250),
+    "cube_idle": (64, 74, 114),
 }
+IDLE_ALPHA = 170   # 0..255
+WATER_Z = -0.2   # mặt nước, thấp hơn mặt tile một chút
 
 # ---- màu giao diện (controls/app dùng)
 UI = {

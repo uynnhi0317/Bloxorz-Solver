@@ -23,7 +23,9 @@ Color = Tuple[int, int, int]
 TILE_THICK = 0.3 
 BLOCK_HEIGHT = 2.0  # vật cao nhất được phép vẽ (là khối đứng thẳng)
 
-from .theme import PALETTE  # noqa: E402  (bảng màu nằm trong theme.py)
+from .textures import TileArt  # noqa: E402
+from .effects import Effects  # noqa: E402
+from .theme import PALETTE, WATER_Z, IDLE_ALPHA
 
 
 """
@@ -96,6 +98,7 @@ def rotate(verts: np.ndarray, axis: int, sign: int, theta: float, pivot: float =
     return out
 
 
+BLOCK_ROUND = 0.09          # bán kính bo góc của khối (đơn vị ô)
 LAYER_SS = 3                 # sàn tĩnh vẽ ở độ phân giải gấp 3 rồi thu nhỏ (cache) -> mép mịn
 BOX_SS = 3                   # khối và bóng cũng vẽ gấp 3 trong khung nhỏ quanh chúng mỗi frame
 SHADOW_ALPHA = 120           # độ đậm bóng đổ dưới khối
@@ -211,6 +214,9 @@ class Renderer:
         self._sprites: Dict[tuple, Optional[Tuple[pygame.Surface, Tuple[int, int]]]] = {}
         self._order_cache: Optional[List[Coord]] = None
         self.hinges = self._resolve_hinges()
+        self.art = TileArt(self)           # hoa văn từng loại tile (textures.py)
+        self.fx_layer = Effects(self)      # glow / hạt bay (effects.py)
+        self.goal_boost = 0.0              # 0..1: goal sáng + tia cao hơn khi thắng
         self.set_area(area, tile_width)
 
     # ------------------------------------------------------------------ bridge
@@ -260,6 +266,8 @@ class Renderer:
         """Canh level giữa màn hình (gọi lại nếu cửa sổ game đổi kích thước)."""
         b = self.board
         self._cache, self._layers, self._sprites, self._order_cache = {}, {}, {}, None  # đổi camera -> dựng lại
+        if getattr(self, "fx_layer", None) is not None:
+            self.fx_layer.reset()
         self._m = np.array(VIEWS[self.view_name], dtype=float)  # (2, 3)
         
         v = np.cross(self._m[0], self._m[1])
@@ -364,6 +372,7 @@ class Renderer:
         self._static_layer(bridge_mask)
         for r, c in self.drawn_tiles(bridge_mask):
             self._sprite(r, c, bridge_mask)
+        self.fx_layer.warm(bridge_mask)
 
     # ------------------------------------------------------------------ sprite từng tile
     def _sprite(self, r: int, c: int, mask: int) -> Optional[Tuple[pygame.Surface, Tuple[int, int]]]:
@@ -420,6 +429,7 @@ class Renderer:
                 continue
             img, (x, y) = sp
             dz = f.dz if f is not None else 0.0
+            img.set_alpha(int(255 * math.exp(-max(0.0, WATER_Z - dz) / 2.0)))   # chìm dưới mặt nước thì mờ dần
             surface.blit(img, (round(x + dx_per_z * dz), round(y + dy_per_z * dz)))
 
     def _draw_tile_shaped(self, surface: pygame.Surface, r: int, c: int, tile: Tile, mask: int, f: TileFx) -> None:
@@ -460,6 +470,7 @@ class Renderer:
         tĩnh đã cache (mịn nhất, nhanh nhất); có hiệu ứng -> vẽ trực tiếp từng tile.
         """
         fx = {**self.ambient_fx, **(tile_fx or {})}
+        self.fx_layer.draw_water(surface, bridge_mask, fx)
         self._draw_boxes(surface, boxes, alpha, below=True)
         if fx:
             self._draw_tiles_fx(surface, bridge_mask, fx)
@@ -467,8 +478,11 @@ class Renderer:
             img, pos = self._static_layer(bridge_mask)
             surface.blit(img, pos)
 
+        self.fx_layer.draw_shore(surface, bridge_mask, fx)   # bờ nước: sau sàn, trước bóng, bị tile gần che đúng thứ tự
         self._draw_shadows(surface, boxes, bridge_mask, fx, alpha)
+        self.fx_layer.draw_under(surface, boxes, bridge_mask, fx, alpha)
         self._draw_boxes(surface, boxes, alpha, below=False)
+        self.fx_layer.draw_over(surface, bridge_mask, fx, alpha)
 
     def _draw_shadows(self, surface: pygame.Surface, boxes: Sequence[Box], mask: int,
                       fx: Mapping[Coord, TileFx], alpha: int) -> None:
@@ -489,6 +503,8 @@ class Renderer:
             if len(hull) < 3:
                 continue
             a = int(SHADOW_ALPHA * max(0.0, 1 - zmin / 6.0) * alpha / 255)
+            if tuple(bx.color) == tuple(PALETTE["cube_idle"]):
+                a = a * IDLE_ALPHA // 255
             if a <= 0:
                 continue
             rs, cs = [p[0] for p in hull], [p[1] for p in hull]
@@ -520,11 +536,23 @@ class Renderer:
         return bool(mask & self.board.bridge_bit[tile.tile_id])  # đóng = đang gập dưới
 
     def _draw_boxes(self, surface: pygame.Surface, boxes: Sequence[Box], alpha: int, below: bool) -> None:
-        """Vẽ các khối trong một khung nhỏ quanh chúng, ở độ phân giải gấp BOX_SS rồi thu nhỏ (mép mịn)."""
         boxes = [bx for bx in boxes if not below or bx.verts[:, 2].min() < -1e-9]
         if not boxes:
             return
         boxes = sorted(boxes, key=lambda x: float(np.dot(x.verts.mean(axis=0), self.view_dir)))
+        idle = tuple(PALETTE["cube_idle"])
+        runs: List[Tuple[int, List[Box]]] = []
+        for bx in boxes:
+            a = alpha * IDLE_ALPHA // 255 if tuple(bx.color) == idle else alpha
+            if runs and runs[-1][0] == a:
+                runs[-1][1].append(bx)
+            else:
+                runs.append((a, [bx]))
+        for a, group in runs:
+            self._blit_boxes(surface, group, a, below)
+
+    def _blit_boxes(self, surface: pygame.Surface, boxes: Sequence[Box], alpha: int, below: bool) -> None:
+        """Vẽ một nhóm khối cùng alpha trong khung nhỏ, supersample BOX_SS rồi thu nhỏ."""
         pts = self.project(np.concatenate([bx.verts for bx in boxes]))
         x0, y0 = (int(v) - 3 for v in np.floor(pts.min(axis=0)))
         x1, y1 = (int(v) + 4 for v in np.ceil(pts.max(axis=0)))
@@ -534,7 +562,7 @@ class Renderer:
         layer = pygame.Surface((w * BOX_SS, h * BOX_SS), pygame.SRCALPHA)
         with self._supersample(BOX_SS, (x0, y0)):
             for bx in boxes:
-                self._draw_box(layer, bx.verts, bx.color, below)
+                self._draw_block(layer, bx.verts, bx.color, below)
         img = pygame.transform.smoothscale(layer, (w, h))
         if alpha < 255:
             img.set_alpha(max(0, alpha))
@@ -626,6 +654,99 @@ class Renderer:
         p = self.project([(a[0], a[1], z), (b[0], b[1], z)]).tolist()
         pygame.draw.line(surface, color, p[0], p[1], width * self._ss)
 
+    # --------------------------------------------------------------- khối bo tròn
+    @staticmethod
+    def _inset_poly(pts, s: float):
+        """Thu nhỏ đa giác lồi vào trong đúng s pixel (miter theo từng cạnh)."""
+        P = np.array(pts, dtype=float)
+        n = len(P)
+        if n < 3:
+            return []
+        x, y = P[:, 0], P[:, 1]
+        area = 0.5 * abs(float(np.dot(x, np.roll(y, -1)) - np.dot(y, np.roll(x, -1))))
+        per = float(np.sum(np.hypot(*(np.roll(P, -1, axis=0) - P).T))) or 1.0
+        s = min(s, 0.9 * 2 * area / per)          # không thu nhỏ quá cỡ với mặt mỏng
+        cen = P.mean(axis=0)
+
+        def inward(a, b):
+            d = b - a
+            ln = float(np.hypot(*d)) or 1.0
+            nv = np.array([-d[1], d[0]]) / ln
+            return nv if float(np.dot(cen - (a + b) / 2, nv)) > 0 else -nv
+
+        out = []
+        for i in range(n):
+            a, b, c = P[i - 1], P[i], P[(i + 1) % n]
+            n1, n2 = inward(a, b), inward(b, c)
+            k = max(0.2, 1.0 + float(np.dot(n1, n2)))
+            out.append((b + (n1 + n2) / k * s).tolist())
+        return out
+
+    def _round_poly(self, surface, pts, color, rad: float, inset: float) -> None:
+        """Đa giác bo góc: thu vào `inset` px rồi tô nét tròn bán kính `rad` (inset == rad -> giữ nguyên biên)."""
+        sp = self._inset_poly(pts, inset)
+        if len(sp) < 3:
+            return
+        pygame.draw.polygon(surface, color, sp)
+        w, rr = max(1, int(round(2 * rad))), max(1, int(round(rad)))
+        for i, p in enumerate(sp):
+            q = sp[(i + 1) % len(sp)]
+            pygame.draw.line(surface, color, p, q, w)
+            pygame.draw.circle(surface, color, (int(p[0]), int(p[1])), rr)
+
+    def _draw_block(self, surface, verts: np.ndarray, color, below: Optional[bool] = None) -> None:
+        """Khối bo góc: bóng viền (hull) bên dưới, mỗi mặt bo tròn đè lên, mặt trên có sheen.
+        Khối tách (cube_idle) viền sáng xanh nhạt như 'shade'; khối active/nguyên khối viền tối cho rõ hình."""
+        center = verts.mean(axis=0)
+        faces = []
+        for idx in FACES:
+            pts = verts[list(idx)]
+            n = np.cross(pts[1] - pts[0], pts[2] - pts[0])
+            c = pts.mean(axis=0)
+            if np.dot(n, c - center) < 0:
+                n = -n
+            n = n / (np.linalg.norm(n) + 1e-9)
+            if float(np.dot(n, self.view_dir)) <= 1e-6:
+                continue
+            poly = list(pts) if below is None else _clip_face(pts, below)[0]
+            if len(poly) < 3:
+                continue
+            faces.append((float(np.dot(c, self.view_dir)), np.array(poly), n))
+        if not faces:
+            return
+        faces.sort(key=lambda f: f[0])
+        ss = self._ss
+        rad = max(1.5, BLOCK_ROUND * self.scale)
+        idle = tuple(color) == tuple(PALETTE["cube_idle"])
+        edge = (112, 160, 214) if idle else shade(color, 0.40)
+        hull = _hull([tuple(p) for p in self.project(np.concatenate([f[1] for f in faces])).tolist()])
+        if len(hull) >= 3:
+            self._round_poly(surface, hull, edge, rad, rad)
+        for _, pts, n in faces:
+            f = 0.55 + 0.45 * max(0.0, float(np.dot(n, _LIGHT)))
+            if n[2] > 0.9:
+                f = min(1.1, f * 1.1)
+            scr = self.project(pts).tolist()
+            self._round_poly(surface, scr, shade(color, f), rad, rad + 1.1 * ss)
+        if idle and below is not True and verts[:, 2].min() > -0.05:
+            self._draw_shade_eyes(surface, faces)
+
+    def _draw_shade_eyes(self, surface, faces) -> None:
+        """Hai mắt trắng của 'shade' trên mặt bên hướng về camera nhiều nhất (chỉ cube chưa chọn)."""
+        side = [f for f in faces if abs(float(f[2][2])) < 0.3]
+        if not side:
+            return
+        _, pts, n = max(side, key=lambda f: float(np.dot(f[2], self.view_dir)))
+        c = pts.mean(axis=0) + n * 0.01
+        t = np.cross(n, (0.0, 0.0, 1.0))
+        t = t / (np.linalg.norm(t) + 1e-9)
+        up = np.array([0.0, 0.0, 1.0])
+        for sgn in (-1, 1):
+            ec = c + t * (0.2 * sgn) + up * 0.05
+            ring = [ec + t * (0.085 * math.cos(a)) + up * (0.13 * math.sin(a))
+                    for a in np.linspace(0, 2 * math.pi, 14, endpoint=False)]
+            pygame.draw.polygon(surface, (240, 246, 255), self.project(np.array(ring)).tolist())
+
     def _draw_tile(self, surface, r: int, c: int, tile: Tile, mask: int,
                    fx: Optional[TileFx] = None) -> None:
         kind = tile.kind
@@ -638,14 +759,7 @@ class Renderer:
                 theta = fx.theta if fx is not None and fx.theta is not None else (math.pi if closed else 0.0)
             elif closed and (fx is None or fx.theta is None):  # không có chỗ gập: cầu đóng = ô trống
                 return
-            color = PALETTE["bridge"]
-        elif kind == TileType.FRAGILE:
-            color = PALETTE["fragile"]
-        else:
-            color = PALETTE["floor"]
-            if (r + c) % 2:
-                color = shade(color, 0.93)  # subtle checkerboard
-
+        color = self.art.body_color(r, c, tile)
         dz = fx.dz if fx is not None else 0.0
         key = (r, c, color, round(theta, 4), self._ss, self._origin) if fx is None or (fx.xform is None and not dz and fx.theta is None) else None
         if key is not None and key in self._cache:
@@ -660,28 +774,4 @@ class Renderer:
                 verts = verts.copy()
                 verts[:, 2] += dz
             self._draw_box(surface, verts, color, key=key)
-        cr, cc = r + 0.5, c + 0.5
-
-        if kind == TileType.GOAL:
-            m = 0.12
-            self._flat(surface, [(r + m, c + m), (r + m, c + 1 - m), (r + 1 - m, c + 1 - m), (r + 1 - m, c + m)],
-                       PALETTE["goal_hole"], z=0.002 + dz)
-            m = 0.28
-            self._flat(surface, [(r + m, c + m), (r + m, c + 1 - m), (r + 1 - m, c + 1 - m), (r + 1 - m, c + m)],
-                       PALETTE["goal_inner"], z=0.003 + dz)
-        elif kind == TileType.SWITCH:
-            sc = PALETTE[tile.switch_kind.value]
-            if tile.switch_kind == SwitchKind.SOFT:  # octagon
-                pts = [(cr + 0.28 * math.sin(a), cc + 0.28 * math.cos(a))
-                       for a in (i * math.pi / 4 + math.pi / 8 for i in range(8))]
-                self._flat(surface, pts, sc, z=0.002 + dz)
-            elif tile.switch_kind == SwitchKind.HEAVY:  # X
-                d = 0.28
-                self._line(surface, (cr - d, cc - d), (cr + d, cc + d), sc, 4, 0.002 + dz)
-                self._line(surface, (cr - d, cc + d), (cr + d, cc - d), sc, 4, 0.002 + dz)
-            else:  # split: "( )"
-                for shift, a0, a1 in ((0.25, 140, 220), (-0.25, -40, 40)):
-                    arc = [(cr + 0.55 * math.sin(math.radians(a)), cc + shift + 0.55 * math.cos(math.radians(a)))
-                           for a in np.linspace(a0, a1, 7)]
-                    for p, q in zip(arc, arc[1:]):
-                        self._line(surface, p, q, sc, 3, 0.002 + dz)
+        self.art.decorate(surface, r, c, tile, theta, dz, fx.xform if fx is not None else None)

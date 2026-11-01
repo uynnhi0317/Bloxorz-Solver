@@ -37,6 +37,8 @@ def render_thumbnail(board: Board) -> pygame.Surface:
 
 
 def main(argv: List[str]) -> int:
+    pygame.display.init()
+    pygame.display.set_mode((1, 1))   # cần có video mode để Surface.convert() hoạt động (driver dummy: không mở cửa sổ)
     paths = [Path(a) for a in argv] or discover_stages()
     if not paths:
         print("Không có stage nào để sinh thumbnail (stages/*/*.json trống).")
