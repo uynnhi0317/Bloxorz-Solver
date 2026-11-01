@@ -311,7 +311,7 @@ def _axis_title(label: str, log: bool) -> str:
 def _grid_shape() -> Tuple[int, int]:
     """(số hàng, số cột) đủ chỗ cho mọi chỉ số trong METRICS"""
     n = len(METRICS)
-    ncols = 2 if n <= 4 else 3
+    ncols = 2
     return math.ceil(n / ncols), ncols
 
 
@@ -320,7 +320,12 @@ def _metric_grid(fig_width: float, row_height: float = 4.5):
     n = len(METRICS)
     nrows, ncols = _grid_shape()
     fig = plt.figure(figsize = (fig_width, row_height * nrows + 1))
-    grid = fig.add_gridspec(nrows, ncols * 2)  # mỗi biểu đồ chiếm 2 cột nhỏ để dịch được nửa ô
+    grid = fig.add_gridspec(
+        nrows, ncols * 2,
+        hspace=0.45, wspace=0.35,
+        left=0.07, right=0.97,  
+        top=0.88, bottom=0.08,   
+    )  # mỗi biểu đồ chiếm 2 cột nhỏ để dịch được nửa ô
     axes = []
     for i in range(n):
         r, c = divmod(i, ncols)
@@ -380,10 +385,7 @@ def _legend_anchor(fig) -> Tuple[float, float]:
 
 
 def _finish_layout(fig, legend: bool = True) -> None:
-    """Căn các biểu đồ con vào vùng giữa tiêu đề/legend ở trên và chú thích ở dưới"""
-    h = fig.get_figheight()
-    body_top = _BODY_TOP if legend else _BODY_TOP_NO_LEGEND
-    fig.tight_layout(pad = 0.5, h_pad = 1.2, w_pad = 1.5, rect = (0, _NOTE_BOTTOM / h, 1, 1 - body_top / h))
+    pass
 
 
 def _title(fig, title: str, note: Optional[str] = None) -> None:
@@ -413,7 +415,7 @@ def _save(fig, out_dir: Path, name: str, dpi: int, show: bool) -> None:
 
 def plot_summary(overall, solvers, colors, n_common, out_dir, dpi, show) -> None:
     """Biểu đồ tổng hợp: mỗi chỉ số một biểu đồ con, trục x = thuật toán, mỗi thuật toán một cột"""
-    fig, axes = _metric_grid(20)
+    fig, axes = _metric_grid(18)
     x = np.arange(len(solvers))
     tick_labels = []
     for solver in solvers:
@@ -486,9 +488,9 @@ def plot_category_detail(df, category, solvers, colors, out_dir, dpi, show) -> N
     sub = df[df["stage_category"] == category]
     stages = list(sub["stage_name"].drop_duplicates())
     ncols = _grid_shape()[1]
-    width = max(20.0, 0.55 * len(stages) * len(solvers) * ncols / 2)
+    width = max(20.0, 0.65 * len(stages) * len(solvers) * ncols / 2)
     fig_width = min(width, 36.0)
-    fig, axes = _metric_grid(fig_width)
+    fig, axes = _metric_grid(fig_width, row_height=5.5)
     tick_labels, tick_rotation = _stage_tick_labels(stages, fig_width)
 
     for ax, (col, (label, _, _)) in zip(axes, METRICS.items()):
@@ -569,7 +571,7 @@ def _cactus_legend(fig, solvers, colors) -> None:
 
 def plot_cactus_overall(df, solvers, colors, out_dir, dpi, show) -> None:
     """Cactus plot trên toàn bộ stage: mỗi chỉ số trong METRICS một biểu đồ con"""
-    fig, axes = _metric_grid(20, row_height = 5)
+    fig, axes = _metric_grid(18, row_height = 6)
     for ax, (col, (label, _, _)) in zip(axes, METRICS.items()):
         _draw_cactus(ax, df, solvers, colors, col, label)
         ax.set_title(f"Cactus plot - {_axis_title(label, _is_log(col, df.loc[df['solved_ok'], col]))}")
@@ -593,7 +595,7 @@ def plot_strip(df, categories, solvers, out_dir, dpi, show) -> None:
     cat_color = {c: CATEGORY_COLORS[i % len(CATEGORY_COLORS)] for i, c in enumerate(categories)}
     x = np.arange(len(solvers))
 
-    fig, axes = _metric_grid(20, row_height = 5)
+    fig, axes = _metric_grid(18, row_height = 6)
 
     for ax, (col, (label, _, _)) in zip(axes, METRICS.items()):
         log = _is_log(col, df.loc[df["solved_ok"], col])
