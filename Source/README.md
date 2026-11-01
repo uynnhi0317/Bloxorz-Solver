@@ -1,11 +1,11 @@
 # Bloxorz Solver
 
-> Đồ án 1 môn **CSC14003 – Nhập môn Trí tuệ Nhân tạo** · Trường ĐH Khoa học Tự nhiên, ĐHQG-HCM
+> Đồ án 1 môn **CSC14003 – Cơ sở Trí tuệ nhân tạo** · Trường Đại học Khoa học tự nhiên, ĐHQG-HCM
 
 Bản cài đặt lại trò chơi **Bloxorz** bằng Python/Pygame, kèm bộ giải tự động
 dùng **BFS, DFS, UCS và A\*** với giao diện replay lời giải và so sánh hiệu năng.
 
-**Video demo:** <link YouTube>
+**Video demo:** [[24_21] Demo Project 1 - Bloxorz Solver | Môn Cơ sở Trí tuệ nhân tạo | Nhóm 16](https://www.youtube.com/watch?v=9_A018ksYxo)
 
 ## Mục lục
 - [1. Giới thiệu](#1-giới-thiệu) 
@@ -102,10 +102,10 @@ Bloxorz-Solver
 
 | Họ tên | MSSV | GitHub |
 |---|---|---|
-| Trần Tuấn Kiệt | 24120359 | [tkiet06-us](https://github.com/tkiet06-us)|
-| Trần Ngô Uyên Nhi | 24120210 | [uynnhi0317](https://github.com/uynnhi0317)|
-| Dương Ngọc Minh Thư | 24120144 | [dnmthuw](https://github.com/dnmthuw)|
 | Hoàng Diễm Phương | 24120125 | [dp-24ctt3](https://github.com/dp-24ctt3)|
+| Dương Ngọc Minh Thư | 24120144 | [dnmthuw](https://github.com/dnmthuw)|
+| Trần Ngô Uyên Nhi | 24120210 | [uynnhi0317](https://github.com/uynnhi0317)|
+| Trần Tuấn Kiệt | 24120359 | [tkiet06-us](https://github.com/tkiet06-us)|
 
 </div>
 
