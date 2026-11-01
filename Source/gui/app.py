@@ -368,7 +368,7 @@ class App:
         try:
             board = load_stage(self.stages[index])
         except Exception as exc:  # file stage hỏng: không crash cả app
-            self.toast(f"Không nạp được stage {index + 1}: {exc}", 4000)
+            self.toast(f"Could not load stage {index + 1}: {exc}", 4000)
             self.scene = "menu"
             return
         self.session = PlaySession(board, Renderer(board, self.board_area()), index)
@@ -390,14 +390,14 @@ class App:
             return
         fn = self.solvers.get(name)
         if fn is None:
-            self.toast(f"Solver {name} chưa được tích hợp")
+            self.toast(f"Solver {name} has not been integrated")
             return
         s.clear_solution()
         self.last_stats = None        # otherwise the old numbers stay on screen while solving
         self.solve_done = False
         self.solve_start = s.state
         self.solving = name
-        self.toast(f"{name}: đang giải...", 600000)
+        self.toast(f"{name}: solving...", 600000)
         board, start = s.board, s.state
 
         def work() -> None:
@@ -420,11 +420,11 @@ class App:
         if not in_game or s is None or s.status != "playing" or s.state != start:
             return
         if err is not None:
-            self.toast(f"{name} lỗi: {err}", 4000)
+            self.toast(f"{name} error: {err}", 4000)
             return
         self.last_stats = (name, res)
         if res.moves is None:
-            self.toast(f"{name}: không tìm thấy lời giải")
+            self.toast(f"{name}: could not find a solution")
         else:
             s.start_replay(list(res.moves))
 
@@ -446,14 +446,14 @@ class App:
         index, moves, by_solver = s.index, s.moves, s.by_solver
         if s.status == "lost":
             self.restart()
-            self.toast("Rơi rồi, thử lại!")
+            self.toast("You fell, try again!")
         elif by_solver:
             s.status = "playing"
             s.sol_paused = True
             self.solve_done = True
         elif index + 1 < len(self.stages):
             self.start_stage(index + 1)
-            self.toast(f"Qua màn {index + 1} ({moves} bước)")
+            self.toast(f"You won in {index + 1} ({moves} moves)")
         else:
             self.end_menu.set_items(["Restart", "Quit to Menu"])  # final stage: overlay stays
 
@@ -502,7 +502,7 @@ class App:
         choice = self.main_menu.handle(e)
         if choice == "New Game":
             if not self.stages:
-                self.toast("Chưa có stage nào trong stages/")
+                self.toast("No stage in folder stages/")
             elif not self.tutorial_seen and self._open_tutorial("newgame"):
                 self.tutorial_seen = True
             else:
