@@ -181,7 +181,7 @@ class Button:
             for dx in (-5, 3):
                 pygame.draw.rect(surface, fg, (r.centerx + dx, r.centery - 8, 4, 16), border_radius=1)
         else:
-            draw_text(surface, self.label, 18, fg, center=self.rect.center)
+            draw_text(surface, self.label, 18, fg, center=(self.rect.centerx, self.rect.centery + 3))
 
 
 class Menu:
