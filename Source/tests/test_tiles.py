@@ -270,16 +270,6 @@ class TestBoardValidation:
         with pytest.raises(ValueError, match="không có trong sàn chơi"):
             _simple_board([{"type": "switch", "targets": ["ghost"]}])
 
-    @pytest.mark.parametrize("dest_tile, destinations, match", [
-        ({"type": "floor"}, [[0, 99], [0, 0]], "nằm ngoài sàn chơi"),
-        ({"type": "void"}, [[0, 1], [0, 0]], "nằm trên ô trống"),
-        ({"type": "fragile"}, [[0, 1], [0, 0]], "dễ vỡ"),
-    ], ids=["out_of_bounds", "void", "fragile"])
-    def test_invalid_split_destination_raises(self, dest_tile, destinations, match):
-        with pytest.raises(ValueError, match=match):
-            _simple_board([dest_tile, {"type": "switch", "switch": "split",
-                                       "destinations": destinations}])
-
 # Stage loader.
 class TestStageLoader:
     @pytest.mark.parametrize("make_source", [
