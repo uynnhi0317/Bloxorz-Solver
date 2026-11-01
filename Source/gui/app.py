@@ -17,7 +17,7 @@ import pygame
 
 from game import Action, Board, Coord, Move, State, get_next_state, is_goal, load_stage
 from .animations import (Animation, BridgeFlips, DIR_DELTA, Sequence as AnimSequence, animate_fall,
-                         animate_intro, animate_move, animate_outro, animate_win, is_bump, DropAnimation)
+                         animate_intro, animate_move, animate_outro, animate_win, is_bump, DropAnimation, RollAnimation)
 from .controls import COLORS, KEY_ACTIONS, Button, Menu, draw_caps, draw_divider, draw_text, draw_title
 from .theme import Background
 from .renderer import Renderer
@@ -245,7 +245,16 @@ class PlaySession:
         if self.anim is None and self.status == "playing" and self.replaying:
             self.step_forward()
 
+    def _winning(self) -> bool:
+        """Khối đang rơi vào goal (hoặc đã thắng): goal sáng mạnh hơn."""
+        if self.status == "won":
+            return True
+        a = self.anim
+        return (isinstance(a, AnimSequence) and self.pending is not None and self.pending[1] == "won"
+                and bool(a.anims) and not isinstance(a.anims[0], RollAnimation))
+
     def draw(self, surface: pygame.Surface) -> None:
+        self.renderer.goal_boost = 1.0 if (self.status == "won" or self.winning_drop) else 0.0
         self.renderer.ambient_fx = self.flips.fx()
         if self.anim is not None:
             self.anim.draw(surface)
@@ -702,16 +711,15 @@ class App:
     def _panel_title(self, surf, x, y, text, s) -> None:
         pygame.draw.rect(surf, COLORS["accent"], (x, y, max(2, int(3 * s)), int(20 * s)))
         draw_text(surf, text, max(10, int(22 * s)), COLORS["text"], bold=True,
-                midleft=(x + int(10 * s), y + int(11 * s)))
+                midleft=(x + int(10 * s), y + int(9 * s)))
 
     def _panel_row(self, surf, x, y, pw, s, label, value) -> None:
         row = pygame.Rect(x, y, pw, int(30 * s))
         pygame.draw.rect(surf, COLORS["panel"], row, border_radius=int(6 * s))
-        cy = row.centery + max(1, int(2.5 * s))
         draw_text(surf, label, max(9, int(18 * s)), COLORS["accent"],
-                midleft=(row.x + int(10 * s), cy))
+                midleft=(row.x + int(10 * s), row.centery))
         draw_text(surf, value, max(10, int(19 * s)), COLORS["text"], bold=True,
-                midright=(row.right - int(10 * s), cy))
+                midright=(row.right - int(10 * s), row.centery))
 
     def _draw_metrics(self, surf: pygame.Surface) -> None:
         """Cột SOLVER bên phải: nút solver, thông tin màn, số liệu, điều khiển replay / sau khi giải."""
@@ -899,6 +907,7 @@ class App:
             for e in pygame.event.get():
                 self.handle_event(e)
             self.update(dt)
+            pygame.display.set_caption(f"Bloxorz Solver  {self.clock.get_fps():.0f} fps")
             self.draw()
             pygame.display.flip()
         pygame.quit()
