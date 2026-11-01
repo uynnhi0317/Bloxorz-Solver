@@ -1,4 +1,4 @@
-# 🧊 Bloxorz Solver
+# Bloxorz Solver
 
 > Đồ án 1 môn **CSC14003 – Nhập môn Trí tuệ Nhân tạo** · Trường ĐH Khoa học Tự nhiên, ĐHQG-HCM
 
@@ -9,7 +9,7 @@ dùng **BFS, DFS, UCS và A\*** với giao diện replay lời giải và so sá
   <img src="docs/demo.gif" alt="Gif Demo" width="700">
 </p>
 
-🎥 **Video demo:** <link YouTube>
+**Video demo:** <link YouTube>
 
 ## Mục lục
 - [1. Giới thiệu](#1-giới-thiệu) 

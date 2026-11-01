@@ -110,8 +110,6 @@ class Board:
                     dest_tile = self.tile_at(dest)
                     if dest_tile.kind == TileType.VOID:
                         raise ValueError(f"Initial board: Split switch tại {(r, c)} có đích {dest} nằm trên ô trống")
-                    if dest_tile.kind == TileType.FRAGILE:
-                        raise ValueError(f"Initial board: Split switch tại {(r, c)} có đích {dest} là gạch dễ vỡ (cube đứng sẽ làm vỡ)")
 
         # Tạo trạng thái các cây cầu đóng/mở bằng chuỗi bit nhị phân
         # - Bit i được bật: Bridge thứ i tương ứng được đóng
