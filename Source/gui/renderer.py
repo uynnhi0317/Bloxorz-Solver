@@ -25,7 +25,7 @@ BLOCK_HEIGHT = 2.0  # vật cao nhất được phép vẽ (là khối đứng t
 
 from .textures import TileArt  # noqa: E402
 from .effects import Effects  # noqa: E402
-from .theme import PALETTE, WATER_Z
+from .theme import PALETTE, WATER_Z, IDLE_ALPHA
 
 
 """
@@ -503,6 +503,8 @@ class Renderer:
             if len(hull) < 3:
                 continue
             a = int(SHADOW_ALPHA * max(0.0, 1 - zmin / 6.0) * alpha / 255)
+            if tuple(bx.color) == tuple(PALETTE["cube_idle"]):
+                a = a * IDLE_ALPHA // 255
             if a <= 0:
                 continue
             rs, cs = [p[0] for p in hull], [p[1] for p in hull]
@@ -534,11 +536,23 @@ class Renderer:
         return bool(mask & self.board.bridge_bit[tile.tile_id])  # đóng = đang gập dưới
 
     def _draw_boxes(self, surface: pygame.Surface, boxes: Sequence[Box], alpha: int, below: bool) -> None:
-        """Vẽ các khối trong một khung nhỏ quanh chúng, ở độ phân giải gấp BOX_SS rồi thu nhỏ (mép mịn)."""
         boxes = [bx for bx in boxes if not below or bx.verts[:, 2].min() < -1e-9]
         if not boxes:
             return
         boxes = sorted(boxes, key=lambda x: float(np.dot(x.verts.mean(axis=0), self.view_dir)))
+        idle = tuple(PALETTE["cube_idle"])
+        runs: List[Tuple[int, List[Box]]] = []
+        for bx in boxes:
+            a = alpha * IDLE_ALPHA // 255 if tuple(bx.color) == idle else alpha
+            if runs and runs[-1][0] == a:
+                runs[-1][1].append(bx)
+            else:
+                runs.append((a, [bx]))
+        for a, group in runs:
+            self._blit_boxes(surface, group, a, below)
+
+    def _blit_boxes(self, surface: pygame.Surface, boxes: Sequence[Box], alpha: int, below: bool) -> None:
+        """Vẽ một nhóm khối cùng alpha trong khung nhỏ, supersample BOX_SS rồi thu nhỏ."""
         pts = self.project(np.concatenate([bx.verts for bx in boxes]))
         x0, y0 = (int(v) - 3 for v in np.floor(pts.min(axis=0)))
         x1, y1 = (int(v) + 4 for v in np.ceil(pts.max(axis=0)))
@@ -710,12 +724,10 @@ class Renderer:
             self._round_poly(surface, hull, edge, rad, rad)
         for _, pts, n in faces:
             f = 0.55 + 0.45 * max(0.0, float(np.dot(n, _LIGHT)))
+            if n[2] > 0.9:
+                f = min(1.1, f * 1.1)
             scr = self.project(pts).tolist()
             self._round_poly(surface, scr, shade(color, f), rad, rad + 1.1 * ss)
-            if n[2] > 0.9 and len(scr) == 4 and below is not True:
-                cen = np.mean(scr, axis=0)
-                inner = [(cen + (np.array(p) - cen) * 0.6).tolist() for p in scr]
-                self._round_poly(surface, inner, shade(color, min(1.15, f * 1.1)), rad * 0.7, rad * 0.7)
         if idle and below is not True and verts[:, 2].min() > -0.05:
             self._draw_shade_eyes(surface, faces)
 

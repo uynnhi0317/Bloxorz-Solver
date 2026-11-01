@@ -34,7 +34,7 @@ WATER_ENABLED = True
 BLOCK_GLOW = {
     tuple(PALETTE["block"]): ((190, 210, 255), 0.50),
     tuple(PALETTE["cube_active"]): ((170, 205, 255), 0.55),
-    tuple(PALETTE["cube_idle"]): ((120, 160, 215), 0.40),
+    tuple(PALETTE["cube_idle"]): ((120, 160, 215), 0.15),
 }
 
 

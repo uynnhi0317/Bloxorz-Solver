@@ -337,6 +337,13 @@ class App:
         w, h = self.screen.get_size()
         return max(0.6, min(1.5, min(w / 1536, h / 864)))
 
+    def _menu_scale(self) -> float:
+        """Hệ số scale cho menu chính (=1 ở ~1536x864). Làm tròn theo bước 0.05 để
+        cache chữ/glow/ornament không phình ra khi kéo resize cửa sổ."""
+        w, h = self.screen.get_size()
+        s = max(0.4, min(1.5, min(w / 1536, h / 864)))
+        return round(s * 20) / 20
+
     def _panel_w(self) -> int:
         return int(PANEL_BASE_W * self._panel_scale())
 
@@ -628,11 +635,14 @@ class App:
         self.background.draw(surf)
         w, h = surf.get_size()
         if self.scene == "menu":
-            draw_divider(surf, w // 2, h // 2 - 320, 720)
-            draw_title(surf, "Bloxorz", 140, center=(w // 2, h // 2 - 220))
-            draw_title(surf, "Solver", 85, color=COLORS["accent"], center=(w // 2, h // 2 - 110))
-            draw_divider(surf, w // 2, h // 2 - 40, 620, flip=True)
-            self.main_menu.draw(surf, w // 2, h // 2 + 10)  # thấp hơn một dòng so với trước (-70)
+            s = self._menu_scale()
+            cx, cy = w // 2, h // 2
+            draw_divider(surf, cx, cy - int(320 * s), int(720 * s) // 20 * 20)
+            draw_title(surf, "Bloxorz", max(16, int(140 * s)), center=(cx, cy - int(220 * s)))
+            draw_title(surf, "Solver", max(10, int(85 * s)), color=COLORS["accent"],
+                       center=(cx, cy - int(110 * s)))
+            draw_divider(surf, cx, cy - int(40 * s), int(620 * s) // 20 * 20, flip=True)
+            self.main_menu.draw(surf, cx, cy + int(10 * s), s)
         elif self.scene == "tutorial":
             self.tutorial.draw(surf)
         elif self.scene == "select":
@@ -678,11 +688,14 @@ class App:
         dim.fill((10, 12, 18, 175))
         surf.blit(dim, (0, 0))
         glow = tuple((c + 130) // 2 for c in color)
-        draw_divider(surf, cx, h // 2 - 190, 340)
-        draw_title(surf, title, 56, color=color, glow_color=glow, center=(cx, h // 2 - 130))
+        s = self._menu_scale()
+        draw_divider(surf, cx, h // 2 - int(190 * s), int(340 * s) // 20 * 20)
+        draw_title(surf, title, max(16, int(56 * s)), color=color, glow_color=glow,
+                   center=(cx, h // 2 - int(130 * s)))
         if subtitle:
-            draw_caps(surf, subtitle, 22, COLORS["muted"], center=(cx, h // 2 - 78))
-        menu.draw(surf, cx, h // 2 - 20)
+            draw_caps(surf, subtitle, max(10, int(22 * s)), COLORS["muted"],
+                      center=(cx, h // 2 - int(78 * s)))
+        menu.draw(surf, cx, h // 2 - int(20 * s), s)
 
     def _draw_credits(self, surf: pygame.Surface) -> None:
         """Vẽ credits"""
@@ -825,18 +838,22 @@ class App:
 
     # --- chọn màn / Load Stage
     def _select_rects(self) -> List[pygame.Rect]:
-        """Tạo bộ khung chữ nhật cho các slot trong menu Load Stage"""
+        """Tạo bộ khung chữ nhật cho các slot trong menu Load Stage (mỗi slot gồm thumbnail + nhãn)."""
         w, h = self.screen.get_size()
-        mx, top, bottom, gap = 90, 150, h - 110, 20
-        cw, ch = (w - 2 * mx - (PAGE_COLS - 1) * gap) / PAGE_COLS, (bottom - top - (PAGE_ROWS - 1) * gap) / PAGE_ROWS
+        s = self._panel_scale()
+        mx, top, bottom, gap = int(90 * s), int(150 * s), h - int(110 * s), int(20 * s)
+        cw = (w - 2 * mx - (PAGE_COLS - 1) * gap) / PAGE_COLS
+        ch = (bottom - top - (PAGE_ROWS - 1) * gap) / PAGE_ROWS
         return [pygame.Rect(mx + (i % PAGE_COLS) * (cw + gap), top + (i // PAGE_COLS) * (ch + gap), cw, ch)
                 for i in range(PAGE_SIZE)]
 
     def _arrow_rects(self) -> Tuple[pygame.Rect, pygame.Rect]:
         """Tạo bộ mũi tên trong menu Load Stage"""
         w, h = self.screen.get_size()
-        mid = (110 + h - 70) // 2
-        return pygame.Rect(18, mid - 40, 54, 80), pygame.Rect(w - 72, mid - 40, 54, 80)
+        s = self._panel_scale()
+        mid = (int(110 * s) + h - int(70 * s)) // 2
+        aw, ah, m = int(54 * s), int(80 * s), int(18 * s)
+        return pygame.Rect(m, mid - ah // 2, aw, ah), pygame.Rect(w - m - aw, mid - ah // 2, aw, ah)
 
     def _thumb(self, idx: int, size: Tuple[int, int]) -> Optional[pygame.Surface]:
         """Thumbnail gui/assets/thumbs/stage_01.png (nếu có); chưa có thì trả None."""
@@ -855,53 +872,68 @@ class App:
         return self._thumbs[key]
 
     def _draw_select(self, surf: pygame.Surface) -> None:
-        """Vẽ menu Load Stage"""
+        """Vẽ menu Load Stage (mọi kích thước chữ / khoảng cách đều scale theo cửa sổ)"""
         w, h = surf.get_size()
+        s = self._panel_scale()
         n = len(self.stages)
         page, pages = self.select_index // PAGE_SIZE, max(1, math.ceil(n / PAGE_SIZE))
-        draw_text(surf, "Select Stage", 40, COLORS["text"], bold=True, center=(w // 2, 80))
-        draw_divider(surf, w // 2, 120, 340, flip=True)
+        draw_text(surf, "Select Stage", max(18, int(40 * s)), COLORS["text"], bold=True,
+                  center=(w // 2, int(80 * s)))
+        draw_divider(surf, w // 2, int(120 * s), int(340 * s) // 20 * 20, flip=True)
 
-        # các slot hiện stage
         rects = self._select_rects()
+        label_size = max(12, int(28 * s))
+        label_h = int(label_size * 1.5)          # vùng dành riêng cho nhãn "Stage N" dưới mỗi card
+        pad = 6                                  # viền quanh thumbnail (3 px mỗi phía)
+        min_w = int(110 * s)
+
+        def thumb_of(idx: int, r: pygame.Rect):
+            return self._thumb(idx, (max(1, int(r.w) - pad * 2), max(1, int(r.h) - label_h - pad * 2)))
+
+        def card_rect(r: pygame.Rect, tw: int, th: int) -> pygame.Rect:
+            """Card + nhãn được canh giữa theo chiều dọc trong slot."""
+            card = pygame.Rect(0, 0, max(tw + pad, min_w), th + pad)
+            card.midtop = (r.centerx, r.y + max(0, (int(r.h) - card.h - label_h) // 2))
+            return card
+
         # Kích thước card chuẩn: lấy từ thumbnail đầu tiên có trên trang này
         ref = None
         for i in range(page * PAGE_SIZE, min(n, (page + 1) * PAGE_SIZE)):
-            t = self._thumb(i, (max(1, rects[0].w - 12), max(1, rects[0].h - 12)))
+            t = thumb_of(i, rects[0])
             if t:
-                ref = (max(t.get_width() + 12, 110), t.get_height() + 12)
+                ref = (t.get_width(), t.get_height())
                 break
 
         for slot, r in enumerate(rects):
             idx = page * PAGE_SIZE + slot
             if idx >= n:  # ô trống: cùng kích thước với card thật
-                empty = pygame.Rect(0, 0, *ref) if ref else r.copy()
-                empty.center = r.center
+                empty = card_rect(r, *ref) if ref else r.copy()
                 pygame.draw.rect(surf, (34, 37, 48), empty, 1, border_radius=10)
                 continue
             sel = idx == self.select_index
-            thumb = self._thumb(idx, (max(1, r.w - 12), max(1, r.h - 12)))
+            col = COLORS["accent"] if sel else COLORS["muted"]
+            thumb = thumb_of(idx, r)
             if thumb:
-                card = pygame.Rect(0, 0, max(thumb.get_width() + 6, 110), thumb.get_height() + 6)
-                card.center = r.center
-                surf.blit(thumb, thumb.get_rect(midtop=(card.centerx, card.y + 3)))
-                draw_text(surf, f"Stage {idx + 1}", 28, COLORS["accent"] if sel else COLORS["muted"],
-                          bold=sel, midbottom=(card.centerx, card.bottom + 50))
+                card = card_rect(r, thumb.get_width(), thumb.get_height())
+                surf.blit(thumb, thumb.get_rect(center=card.center))
+                draw_text(surf, f"Stage {idx + 1}", label_size, col, bold=sel,
+                          midtop=(card.centerx, card.bottom + int(4 * s)))
             else:
                 card = r
-                draw_text(surf, f"Stage {idx + 1}", 26, COLORS["accent"] if sel else COLORS["muted"],
-                          bold=sel, center=card.center)
+                draw_text(surf, f"Stage {idx + 1}", max(12, int(26 * s)), col, bold=sel, center=card.center)
             pygame.draw.rect(surf, COLORS["accent"] if sel else COLORS["border"], card, 2, border_radius=10)
 
         # mũi tên chuyển page, text hướng dẫn manuver trong menu
+        a, b, lw = int(12 * s), int(26 * s), max(2, int(6 * s))
         for rect, glyph, ok in zip(self._arrow_rects(), ("left", "right"), (page > 0, page < pages - 1)):
             col = COLORS["accent"] if ok else (50, 54, 68)
             cx, cy, d = rect.centerx, rect.centery, 1 if glyph == "right" else -1
-            pygame.draw.lines(surf, col, False, [(cx - 12 * d, cy - 26), (cx + 12 * d, cy), (cx - 12 * d, cy + 26)], 6)
-        draw_text(surf, f"Page {page + 1}/{pages}", 25, COLORS["muted"], midbottom=(w // 2, h - 35))
-        draw_text(surf, "Arrow keys: move   Enter: play   Esc: back", 20, COLORS["muted"],
-                  midbottom=(w // 2, h - 8))
-
+            pygame.draw.lines(surf, col, False, [(cx - a * d, cy - b), (cx + a * d, cy), (cx - a * d, cy + b)], lw)
+        draw_text(surf, f"Page {page + 1}/{pages}", max(12, int(25 * s)), COLORS["muted"],
+                  midbottom=(w // 2, h - int(35 * s)))
+        draw_text(surf, "Arrow keys: move   Enter: play   Esc: back", max(11, int(20 * s)), COLORS["muted"],
+                  midbottom=(w // 2, h - int(8 * s)))
+        
     # ------------------------------------------------------------------ main loop
     def run(self) -> None:
         while self.running:

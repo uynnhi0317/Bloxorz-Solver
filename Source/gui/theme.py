@@ -20,8 +20,9 @@ PALETTE = {
     "split": (160, 150, 255),
     "block": (226, 230, 240),          # vỏ trắng ngà
     "cube_active": (236, 240, 250),
-    "cube_idle": (40, 44, 66),
+    "cube_idle": (64, 74, 114),
 }
+IDLE_ALPHA = 170   # 0..255
 WATER_Z = -0.2   # mặt nước, thấp hơn mặt tile một chút
 
 # ---- màu giao diện (controls/app dùng)

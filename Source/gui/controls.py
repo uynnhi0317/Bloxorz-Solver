@@ -203,22 +203,26 @@ class Menu:
     def set_items(self, items: List[str]) -> None:
         self.items, self.selected, self.rects = list(items), 0, []
 
-    def draw(self, surface: pygame.Surface, center_x: int, top: int) -> None:
+    def draw(self, surface: pygame.Surface, center_x: int, top: int, scale: float = 1.0) -> None:
         """Không khung, chữ small caps; mục đang chọn sáng + mũi tên hai bên."""
         self.rects = []
-        h = self.size + 18
+        size = max(10, int(self.size * scale))
+        width = int(self.width * scale)
+        gap = int(self.gap * scale)
+        h = size + int(18 * scale)
         for i, label in enumerate(self.items):
-            r = pygame.Rect(0, 0, self.width, h)
-            r.midtop = (center_x, top + i * (h + self.gap))
+            r = pygame.Rect(0, 0, width, h)
+            r.midtop = (center_x, top + i * (h + gap))
             self.rects.append(r)
             sel = i == self.selected
             col = COLORS["text"] if sel else COLORS["muted"]
-            img = caps_surface(label, self.size, col)
+            img = caps_surface(label, size, col)
             rect = img.get_rect(center=r.center)
             surface.blit(img, rect)
             if sel:
-                draw_ornament(surface, rect.left - 34, r.centery, -1, col)
-                draw_ornament(surface, rect.right + 34, r.centery, 1, col)
+                off = int(34 * scale)
+                draw_ornament(surface, rect.left - off, r.centery, -1, col)
+                draw_ornament(surface, rect.right + off, r.centery, 1, col)
 
     def handle(self, event: pygame.event.Event) -> Optional[str]:
         if not self.items:
