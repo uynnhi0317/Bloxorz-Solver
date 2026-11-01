@@ -22,6 +22,13 @@ from game import SwitchKind, Tile, TileType
 
 Pt = Tuple[float, float]
 
+# Phong cách sàn / ô vỡ: "classic" = bản gốc (phẳng), "hollow" = đá cuội + rêu, "hot" = than hồng nứt.
+# Đổi hai hằng này là chuyển được qua lại, không cần xoá code.
+FLOOR_STYLE = "classic"      # "classic" | "hollow"
+FRAGILE_STYLE = "classic"    # "classic" | "hot"
+CLASSIC = {"floor": (112, 128, 164), "floor_alt": (104, 119, 153),
+           "fragile": (214, 140, 72), "crack": (122, 72, 34)}
+
 
 def shade(c, f: float):
     return tuple(max(0, min(255, int(v * f))) for v in c)
@@ -127,13 +134,15 @@ class TileArt:
     def body_color(self, r: int, c: int, tile: Tile):
         k = tile.kind
         if k == TileType.FRAGILE:
-            return ART["frag_body"]
+            return ART["frag_body"] if FRAGILE_STYLE == "hot" else CLASSIC["fragile"]
         if k == TileType.BRIDGE:
             return ART["bridge_body"]
         if k == TileType.GOAL:
             return ART["goal_body"]
         if k == TileType.SWITCH:
             return ART["split_body"] if tile.switch_kind == SwitchKind.SPLIT else ART["plate_body"]
+        if FLOOR_STYLE == "classic":
+            return CLASSIC["floor_alt"] if (r + c) % 2 else CLASSIC["floor"]
         return ART["moss_body"] if (r + c) % 2 else ART["cobble_body"]
 
     # ------------------------------------------------------------ drawing primitives
@@ -168,9 +177,13 @@ class TileArt:
         ctx = ((r, c), theta, dz, xform)
         k = tile.kind
         if k == TileType.FLOOR:
-            self._cobbles(s, ctx, r, c, moss=(r + c) % 2 == 1)
+            if FLOOR_STYLE == "hollow":
+                self._cobbles(s, ctx, r, c, moss=(r + c) % 2 == 1)
         elif k == TileType.FRAGILE:
-            self._fragile(s, ctx, r, c)
+            if FRAGILE_STYLE == "hot":
+                self._fragile(s, ctx, r, c)
+            else:
+                self._fragile_classic(s, ctx, r, c)
         elif k == TileType.BRIDGE:
             self._bridge(s, ctx, r, c)
         elif k == TileType.GOAL:
@@ -217,6 +230,14 @@ class TileArt:
         else:        # vài đốm rêu nhỏ cho đỡ trơ
             for _ in range(rng.choice((0, 1, 2))):
                 self._moss(s, ctx, rng, r, c, r + rng.uniform(0.1, 0.9), c + rng.uniform(0.1, 0.9), 0.04)
+
+    # ------------------------------------------------------------ fragile: bản gốc (cam hổ phách, vài vết nứt)
+    def _fragile_classic(self, s, ctx, r, c) -> None:
+        rng = random.Random(r * 6151 + c * 3571 + 5)
+        for _ in range(3):
+            a = edge_pt(rng, r, c, rng.randrange(4))
+            b = (r + 0.5 + rng.uniform(-0.2, 0.2), c + 0.5 + rng.uniform(-0.2, 0.2))
+            self.line(s, ctx, jag(rng, a, b, 4, 0.05), CLASSIC["crack"], 1.4)
 
     # ------------------------------------------------------------ fragile: than hồng, nứt
     def _fragile(self, s, ctx, r, c) -> None:

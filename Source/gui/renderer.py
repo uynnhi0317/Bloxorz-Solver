@@ -372,7 +372,7 @@ class Renderer:
         self._static_layer(bridge_mask)
         for r, c in self.drawn_tiles(bridge_mask):
             self._sprite(r, c, bridge_mask)
-        self.fx_layer.warm()
+        self.fx_layer.warm(bridge_mask)
 
     # ------------------------------------------------------------------ sprite từng tile
     def _sprite(self, r: int, c: int, mask: int) -> Optional[Tuple[pygame.Surface, Tuple[int, int]]]:
@@ -470,7 +470,7 @@ class Renderer:
         tĩnh đã cache (mịn nhất, nhanh nhất); có hiệu ứng -> vẽ trực tiếp từng tile.
         """
         fx = {**self.ambient_fx, **(tile_fx or {})}
-        self.fx_layer.draw_water(surface)
+        self.fx_layer.draw_water(surface, bridge_mask, fx)
         self._draw_boxes(surface, boxes, alpha, below=True)
         if fx:
             self._draw_tiles_fx(surface, bridge_mask, fx)
@@ -478,6 +478,7 @@ class Renderer:
             img, pos = self._static_layer(bridge_mask)
             surface.blit(img, pos)
 
+        self.fx_layer.draw_shore(surface, bridge_mask, fx)   # bờ nước: sau sàn, trước bóng, bị tile gần che đúng thứ tự
         self._draw_shadows(surface, boxes, bridge_mask, fx, alpha)
         self.fx_layer.draw_under(surface, boxes, bridge_mask, fx, alpha)
         self._draw_boxes(surface, boxes, alpha, below=False)
@@ -715,6 +716,24 @@ class Renderer:
                 cen = np.mean(scr, axis=0)
                 inner = [(cen + (np.array(p) - cen) * 0.6).tolist() for p in scr]
                 self._round_poly(surface, inner, shade(color, min(1.15, f * 1.1)), rad * 0.7, rad * 0.7)
+        if idle and below is not True and verts[:, 2].min() > -0.05:
+            self._draw_shade_eyes(surface, faces)
+
+    def _draw_shade_eyes(self, surface, faces) -> None:
+        """Hai mắt trắng của 'shade' trên mặt bên hướng về camera nhiều nhất (chỉ cube chưa chọn)."""
+        side = [f for f in faces if abs(float(f[2][2])) < 0.3]
+        if not side:
+            return
+        _, pts, n = max(side, key=lambda f: float(np.dot(f[2], self.view_dir)))
+        c = pts.mean(axis=0) + n * 0.01
+        t = np.cross(n, (0.0, 0.0, 1.0))
+        t = t / (np.linalg.norm(t) + 1e-9)
+        up = np.array([0.0, 0.0, 1.0])
+        for sgn in (-1, 1):
+            ec = c + t * (0.2 * sgn) + up * 0.05
+            ring = [ec + t * (0.085 * math.cos(a)) + up * (0.13 * math.sin(a))
+                    for a in np.linspace(0, 2 * math.pi, 14, endpoint=False)]
+            pygame.draw.polygon(surface, (240, 246, 255), self.project(np.array(ring)).tolist())
 
     def _draw_tile(self, surface, r: int, c: int, tile: Tile, mask: int,
                    fx: Optional[TileFx] = None) -> None:
