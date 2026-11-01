@@ -5,6 +5,7 @@ from typing import Dict, List, Optional, Tuple
 
 import numpy as np
 import pygame
+from pathlib import Path
 
 from game import Action
 from .theme import SERIF, UI
@@ -20,14 +21,21 @@ KEY_ACTIONS = {
 }
 CONFIRM_KEYS = (pygame.K_RETURN, pygame.K_KP_ENTER, pygame.K_SPACE)
 
+
+FONT_DIR = Path(__file__).resolve().parent / "assets" / "fonts"
+FONT_FILES = {"title": "EmilysCandy-Regular.ttf", "ui": "FuzzyBubbles-Regular.ttf"}
 _FONTS: Dict[Tuple[int, bool], pygame.font.Font] = {}
 
-
-def font(size: int, bold: bool = False) -> pygame.font.Font:
-    """Font có hỗ trợ tiếng Việt (nếu máy có), cache theo (size, bold)."""
-    key = (size, bold)
+def font(size: int, bold: bool = False, role: str = "ui") -> pygame.font.Font:
+    key = (size, bold, role)
     if key not in _FONTS:
-        _FONTS[key] = pygame.font.SysFont(SERIF, size, bold=bold)
+        path = FONT_DIR / FONT_FILES.get(role, "")
+        if path.is_file():
+            f = pygame.font.Font(str(path), size)
+            f.set_bold(bold)  # fake bold; pass bold=False for brush fonts
+        else:
+            f = pygame.font.SysFont(SERIF, size, bold=bold)  # fallback if file missing
+        _FONTS[key] = f
     return _FONTS[key]
 
 
