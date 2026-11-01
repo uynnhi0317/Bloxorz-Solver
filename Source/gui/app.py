@@ -474,10 +474,6 @@ class App:
         else:
             self.scene = "menu"
 
-    def _input_locked(self) -> bool:
-        s = self.session
-        return bool(self.solving) or s.replaying or (self.panel_on and s.has_solution)
-
     # ------------------------------------------------------------------ event
     def handle_event(self, e: pygame.event.Event) -> None:
         """Chọn handle event phù hợp với từng scene"""
@@ -573,9 +569,10 @@ class App:
                 self.paused = True
             elif e.key == pygame.K_r:
                 self.restart()
-            elif e.key == pygame.K_SPACE and not self._input_locked():
+            elif e.key == pygame.K_SPACE:
+                if not s.replaying and not self.solving:
                     s.toggle_cube()
-            elif e.key in KEY_ACTIONS and not self._input_locked():
+            elif e.key in KEY_ACTIONS and not s.replaying and not self.solving:
                 s.manual_action(KEY_ACTIONS[e.key])
         elif e.type == pygame.MOUSEBUTTONDOWN and e.button == 1:
             if self.btn_pause.hit(e.pos):

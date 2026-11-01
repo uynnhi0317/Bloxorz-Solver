@@ -31,9 +31,6 @@ WATER_REACH = (3, 5, 6)   # tầm nhoè 3 lớp (đơn vị tile)
 WATER_W = (1.0, 0.9, 0.7)       # tổng 2.6 -> tại bờ ~1.3: giữ sáng hết mức một đoạn ngoài bờ rồi mới mờ
 WATER_GAIN = 0.65
 WATER_ENABLED = True
-SHORE_OFFSET = 0.06   # đẩy đường mực nước ra ngoài chân tile; nhỏ quá thì mặt bên tile che mất
-SHORE_SHIFT = (0.025, 0.025)   # dịch thêm trên màn hình (x phải, y xuống), đơn vị tile
-SHORE_TRIM = 0.01           # cắt bớt mỗi đầu đường n% chiều dài để khỏi thò ra ngoài góc tile
 
 # màu khối trong PALETTE -> (màu glow, độ sáng)
 BLOCK_GLOW = {
@@ -77,12 +74,13 @@ class Effects:
         self._last = None
         self._t = 0.0
         self._water = None
-        self._shore_cache = {}  
+        self._shore = None
+        self._shore_cache = None
 
     def reset(self) -> None:
         self._sp.clear()
         self._water = None
-        self._shore_cache.clear()
+        self._shore_cache = None
 
     # ------------------------------------------------------------ sprites
     def _trim(self) -> None:
@@ -169,6 +167,7 @@ class Effects:
     # ------------------------------------------------------------ public
     def draw_under(self, surf, boxes: Sequence, mask: int, fx: Mapping, alpha: int) -> None:
         self._tick()
+        self.draw_shore(surf, fx)
         r, sc = self.r, self.r.scale
         for (rr, cc), f in (fx.items() if WATER_ENABLED else ()):          # tile đang xuyên qua mặt nước: loé sáng ở chân tile
             if f.hidden or not f.dz:
@@ -249,6 +248,24 @@ class Effects:
         return {(i, j) for i, row in enumerate(self.r.board.tiles)
                 for j, t in enumerate(row) if t.kind != TileType.VOID}
 
+    def _shore_edges(self):
+        """[(a, b, front, cell)]: cạnh ô giáp void / ngoài bảng; front = mặt bên quay về camera."""
+        if self._shore is None:
+            solid, vd, out = self._solid_cells(), self.r.view_dir, []
+            for i, j in solid:
+                for di, dj in ((-1, 0), (1, 0), (0, -1), (0, 1)):
+                    if (i + di, j + dj) in solid:
+                        continue
+                    front = di * vd[0] + dj * vd[1] > 1e-6
+                    if di:
+                        rr = i + (1 if di > 0 else 0)
+                        out.append(((rr, j), (rr, j + 1), front, (i, j)))
+                    else:
+                        cc = j + (1 if dj > 0 else 0)
+                        out.append(((i, cc), (i + 1, cc), front, (i, j)))
+            self._shore = out
+        return self._shore
+
     def _water_layer(self):
         """Ảnh glow nước (nền đen, blit cộng sáng). Tính ở 1/Q độ phân giải rồi phóng lên."""
         if self._water is None:
@@ -277,56 +294,49 @@ class Effects:
             return
         self._water_layer()
 
-    def draw_water(self, surf, mask: int, fx) -> None:
-        """Gọi TRƯỚC khi vẽ sàn: sương nước + đường mực nước."""
+    def draw_water(self, surf) -> None:
+        """Gọi TRƯỚC khi vẽ sàn."""
+        if not WATER_ENABLED:
+            return
         layer, pos = self._water_layer()
         surf.blit(layer, pos, special_flags=ADD)
-        self.draw_shore(surf, mask, fx)
         
 
-    def _shore_px(self, mask: int, falling: tuple):
-        """[(phase, cell, p0, p1)]: cạnh bờ quay về camera, đã chiếu ra màn hình.
-        Ô cầu đang đóng / ô fragile đang rơi không tính là đất."""
-        key = (mask, falling)
-        hit = self._shore_cache.get(key)
-        if hit is None:
-            if len(self._shore_cache) > 16:
-                self._shore_cache.clear()
-            r, b, vd, fall = self.r, self.r.board, self.r.view_dir, set(falling)
-            solid = set()
-            for i, row in enumerate(b.tiles):
-                for j, t in enumerate(row):
-                    if t.kind == TileType.VOID or (i, j) in fall:
-                        continue
-                    if t.kind == TileType.BRIDGE and mask & b.bridge_bit[t.tile_id]:
-                        continue
-                    solid.add((i, j))
-            hit, o = [], SHORE_OFFSET
-            for i, j in sorted(solid):
-                for di, dj in ((-1, 0), (1, 0), (0, -1), (0, 1)):
-                    if (i + di, j + dj) in solid or di * vd[0] + dj * vd[1] <= 1e-6:
-                        continue
-                    if di:
-                        rr = i + (1 if di > 0 else 0)
-                        a, c = (rr, j), (rr, j + 1)
-                    else:
-                        cc = j + (1 if dj > 0 else 0)
-                        a, c = (i, cc), (i + 1, cc)
-                    p = r.project([(a[0] + di * o, a[1] + dj * o, WATER_Z),
-                                   (c[0] + di * o, c[1] + dj * o, WATER_Z)])
-                    sh = np.array(SHORE_SHIFT, float) * r.scale
-                    q0, q1 = p[0] + sh, p[1] + sh
-                    d = q1 - q0
-                    q0, q1 = q0 + d * SHORE_TRIM, q1 - d * SHORE_TRIM
-                    hit.append((i * 0.9 + j * 1.3 + di + 2 * dj, (i, j), q0.tolist(), q1.tolist()))
-            self._shore_cache[key] = hit
-        return hit
+    def _shore_px(self):
+        """Toạ độ màn hình của các cạnh bờ phía trước (camera cố định nên tính một lần)."""
+        if self._shore_cache is None:
+            r, out = self.r, []
+            for n, (a, b, front, cell) in enumerate(self._shore_edges()):
+                if front:
+                    p = r.project([(a[0], a[1], WATER_Z), (b[0], b[1], WATER_Z)])
+                    out.append((n, cell, p[0].tolist(), p[1].tolist()))
+            self._shore_cache = out
+        return self._shore_cache
 
-    def draw_shore(self, surf, mask: int, fx) -> None:
-        sc = self.r.scale
+    # def draw_shore(self, surf, fx) -> None:
+    #     if not WATER_ENABLED:
+    #         return
+    #     sc = self.r.scale
+    #     w = max(1, int(sc / 32))
+    #     for n, cell, p0, p1 in self._shore_px():
+    #         f, e = fx.get(cell), 1.0
+    #         if f is not None:
+    #             if f.hidden:
+    #                 continue
+    #             e = max(0.0, min(1.0, 1.0 + f.dz / 1.5))
+    #             if e <= 0.02:
+    #                 continue
+    #         pulse = 0.5 + 0.5 * math.sin(self._t * 1.6 + n * 0.7)
+    #         self._glow(surf, (p0[0] + p1[0]) / 2, (p0[1] + p1[1]) / 2, 0.7 * sc, 0.32 * sc,
+    #                    WATER_HI, (0.32 + 0.15 * round(pulse * 4) / 4) * e)
+    #         pygame.draw.line(surf, tuple(int(v * e) for v in (190, 240, 255)), p0, p1, w)
+
+    def draw_shore(self, surf, fx) -> None:
+        r, sc = self.r, self.r.scale
         w = max(1, int(sc / 32))
-        falling = tuple(sorted(c for c, f in fx.items() if f.xform is not None))
-        for phase, cell, p0, p1 in self._shore_px(mask, falling):
+        for n, (a, b, front, cell) in enumerate(self._shore_edges()):
+            if not front:
+                continue
             f, e = fx.get(cell), 1.0
             if f is not None:
                 if f.hidden:
@@ -334,8 +344,9 @@ class Effects:
                 e = max(0.0, min(1.0, 1.0 + f.dz / 1.5))   # tile còn chìm sâu -> chưa có đường mực nước
                 if e <= 0.02:
                     continue
-            pulse = 0.5 + 0.5 * math.sin(self._t * 1.6 + phase)
+            pulse = 0.5 + 0.5 * math.sin(self._t * 1.6 + n * 0.7)
+            p = r.project([(a[0], a[1], WATER_Z), (b[0], b[1], WATER_Z)])
             for t in (0.2, 0.5, 0.8):
-                x, y = p0[0] + (p1[0] - p0[0]) * t, p0[1] + (p1[1] - p0[1]) * t
+                x, y = p[0] + (p[1] - p[0]) * t
                 self._glow(surf, x, y, 0.55 * sc, 0.32 * sc, WATER_HI, (0.30 + 0.15 * round(pulse * 4) / 4) * e)
-            pygame.draw.line(surf, tuple(int(v * e) for v in (200, 240, 255)), p0, p1, w)
+            pygame.draw.line(surf, tuple(int(v * e) for v in (190, 240, 255)), p[0], p[1], w)
