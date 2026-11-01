@@ -89,35 +89,16 @@ python -m experiments.plot_results              # Vẽ biểu đồ
 Bloxorz-Solver
 │   .gitignore
 │   PLAN.md
-│
 └───Source                                      # Mã nguồn dự án
     │   main.py
     │   README.md
     │   requirements.txt
-    │
-    ├───experiments                             # Scripts đo đạc các thuật giải,
-    │   │                                         trực quan hóa dữ liệu
-    │   │
-    │   └───results                             # Lưu trữ số liệu và biểu đồ
-    │
+    ├───experiments                             # Scripts đo đạc các thuật giải và trực quan hóa dữ liệu
     ├───game                                    # Logic trò chơi
-    │
     ├───gui                                     # Đồ họa, hoạt ảnh
-    │   │
-    │   └───assets                              # Tài nguyên trò chơi
-    │       │
-    │       ├───scripts                         # Script sinh ra bộ thumbnail của các màn chơi
-    │       │
-    │       ├───thumbs                          # Ảnh thumbnail của các màn chơi
-    │       │
-    │       └───tutorial                        # Hướng dẫn chơi
-    │
     ├───solvers                                 # Thuật toán giải màn chơi
-    │
-    ├───stages                                  # Bản đồ của các màn chơi
-    │
-    └───tests                                   # Scripts kiểm tra các tính năng của dự án,
-                                                  mẫu chung cho bản đồ màn chơi
+    ├───stages                                  # Bản đồ các màn chơi
+    └───tests                                   # Scripts kiểm tra các tính năng của dự án
 ```
 
 ## 5. Thành viên
