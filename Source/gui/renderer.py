@@ -470,7 +470,7 @@ class Renderer:
         tĩnh đã cache (mịn nhất, nhanh nhất); có hiệu ứng -> vẽ trực tiếp từng tile.
         """
         fx = {**self.ambient_fx, **(tile_fx or {})}
-        self.fx_layer.draw_water(surface)
+        self.fx_layer.draw_water(surface, bridge_mask, fx)
         self._draw_boxes(surface, boxes, alpha, below=True)
         if fx:
             self._draw_tiles_fx(surface, bridge_mask, fx)
