@@ -582,76 +582,6 @@ def plot_cactus_overall(df, solvers, colors, out_dir, dpi, show) -> None:
     _save(fig, out_dir, "cactus_overall", dpi, show)
 
 
-CATEGORY_COLORS = ("#59A14F", "#EDC948", "#F28E2B", "#E15759", "#B07AA1", "#76B7B2")  # xanh -> đỏ ~ dễ -> khó
-
-
-def plot_strip(df, categories, solvers, out_dir, dpi, show) -> None:
-    """
-    Strip plot: trục x = solver, trục y = giá trị đo; mỗi chấm là kết quả trên một stage.
-    Màu chấm = nhóm stage (dễ -> khó), vạch đen = trung vị của solver, x đỏ = stage không giải được.
-    Mỗi chỉ số trong METRICS một biểu đồ con.
-    """
-    rng = np.random.default_rng(0)  # jitter cố định để lần chạy nào cũng ra cùng một hình
-    cat_color = {c: CATEGORY_COLORS[i % len(CATEGORY_COLORS)] for i, c in enumerate(categories)}
-    x = np.arange(len(solvers))
-
-    fig, axes = _metric_grid(18, row_height = 6)
-
-    for ax, (col, (label, _, _)) in zip(axes, METRICS.items()):
-        log = _is_log(col, df.loc[df["solved_ok"], col])
-        all_vals: List[float] = []
-        for i, solver in enumerate(solvers):
-            sub = df[df["solver"] == solver]
-            ok = sub[sub["solved_ok"]].dropna(subset = [col])
-            if log:
-                ok = ok[ok[col] > 0]
-            if len(ok):
-                jitter = rng.uniform(-0.18, 0.18, len(ok))
-                ax.scatter(i + jitter, ok[col], s = 38, c = [cat_color[c] for c in ok["stage_category"]],
-                           edgecolor = "black", linewidth = 0.5, alpha = 0.9, zorder = 3)
-                ax.hlines(ok[col].median(), i - 0.3, i + 0.3, color = "black", linewidth = 2, zorder = 4)
-                all_vals.extend(ok[col].tolist())
-
-            failed = int((~sub["solved_ok"]).sum())
-            if failed:
-                ax.plot(i + rng.uniform(-0.18, 0.18, failed), np.full(failed, 0.97), "x",
-                        transform = ax.get_xaxis_transform(), color = "#C00000",
-                        markersize = 7, markeredgewidth = 1.6, zorder = 5, clip_on = False)
-                # Dấu x nằm theo tỉ lệ khung, không phải giá trị đo -> ghi chú để tránh đọc nhầm
-                ax.annotate(f"{failed} không giải", (i, 0.97), xycoords = ax.get_xaxis_transform(),
-                            xytext = (10, 0), textcoords = "offset points", va = "center",
-                            fontsize = 7, color = "#C00000", annotation_clip = False)
-
-        ax.set_xlim(-0.6, len(solvers) - 0.4)
-        ax.set_xticks(x)
-        ax.set_xticklabels(solvers, rotation = 20, ha = "right")
-        ax.set_ylabel(label)
-        ax.set_title(_axis_title(label, log))
-        ax.grid(axis = "y", linestyle = ":", alpha = 0.6, zorder = 0)
-        ax.set_axisbelow(True)
-        if log:
-            ax.set_yscale("log")
-        if all_vals:  # chừa khoảng trống phía trên cho dấu x đỏ
-            lo, hi = min(all_vals), max(all_vals)
-            ax.set_ylim(lo / 3, hi * 12) if log else ax.set_ylim(0, hi * 1.2)
-        if log:
-            _plain_log_axis(ax)
-
-    handles = [plt.Line2D([0], [0], marker = "o", linestyle = "", markerfacecolor = cat_color[c],
-                          markeredgecolor = "black", markersize = 8) for c in categories]
-    names = [f"nhóm {c}" for c in categories]
-    handles += [plt.Line2D([0], [0], color = "black", linewidth = 2),
-                plt.Line2D([0], [0], marker = "x", linestyle = "", color = "#C00000", markersize = 8,
-                           markeredgewidth = 1.6)]
-    names += ["trung vị", "không giải được"]
-    fig.legend(handles, names, loc = "upper center", bbox_to_anchor = _legend_anchor(fig),
-               ncol = min(len(names), 6), frameon = False)
-    _title(fig, "Phân bố kết quả đo của từng thuật toán trên các stage",
-           note = "Mỗi chấm = 1 stage; màu = nhóm stage; vạch đen = trung vị; "
-                  "dấu x đỏ đặt ở mép trên, không phải giá trị đo")
-    _finish_layout(fig)
-    _save(fig, out_dir, "strip_plot", dpi, show)
-
 def main() -> None:
     parser = argparse.ArgumentParser(description = "Vẽ biểu đồ & bảng từ kết quả benchmark Bloxorz")
     parser.add_argument("--csv", type = Path, default = DEFAULT_CSV, help = "file CSV kết quả benchmark")
@@ -681,7 +611,6 @@ def main() -> None:
     for cat in categories:
         plot_category_detail(df, cat, solvers, colors, charts_dir, args.dpi, args.show)
     plot_cactus_overall(df, solvers, colors, charts_dir, args.dpi, args.show)
-    plot_strip(df, categories, solvers, charts_dir, args.dpi, args.show)
 
     print(f"\nHoàn tất trích xuất:\n  - Bảng: {tables_dir}\n  - Biểu đồ: {charts_dir}")
 
