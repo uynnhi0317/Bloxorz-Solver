@@ -460,7 +460,7 @@ class App:
             self.solve_done = True
         elif index + 1 < len(self.stages):
             self.start_stage(index + 1)
-            self.toast(f"You won in {index + 1} ({moves} moves)")
+            self.toast(f"You passed stage {index + 1} in {moves} moves")
         else:
             self.end_menu.set_items(["Restart", "Quit to Menu"])  # final stage: overlay stays
 
