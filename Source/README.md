@@ -5,10 +5,6 @@
 Bản cài đặt lại trò chơi **Bloxorz** bằng Python/Pygame, kèm bộ giải tự động
 dùng **BFS, DFS, UCS và A\*** với giao diện replay lời giải và so sánh hiệu năng.
 
-<p align="center">
-  <img src="docs/demo.gif" alt="Gif Demo" width="700">
-</p>
-
 **Video demo:** <link YouTube>
 
 ## Mục lục
